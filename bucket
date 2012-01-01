@@ -1,0 +1,22 @@
+SVN_TAGS=refs/remotes/tags
+
+git svn init svn://svn.savannah.nongnu.org/avrdude --trunk=trunk/avrdude
+git config --add svn-remote.svn.tags "tags/*/avrdude:$SVN_TAGS/*"
+git config --add svn-remote.svn.branches \
+    "branches/{RELEASE_5_11}/avrdude:refs/remotes/branches/*"
+
+# Misplaced?
+git config --add svn-remote.svn.tags "{RELEASE_5_10_0}/avrdude:$SVN_TAGS/*"
+
+# "RELEASE_5_11_0" in top-level directory is just a duplicate of the tag
+
+git update-ref refs/remotes/trunk master
+
+git svn fetch --authors-file=Meta/svn.authors
+
+git for-each-ref --format="%(refname)" "$SVN_TAGS" |
+while read -r tag; do
+    if test "${tag%@*}" = ""; then
+        git tag "${tag#"$SVN_TAGS/"}" "$tag"
+    fi
+done
