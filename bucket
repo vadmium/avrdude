@@ -1,20 +1,49 @@
-# Upstream Subversion branches should be remote branches
+# Upstream Subversion branches should have remote-tracking branches pointing
+# to them directly under "refs/remotes" (for instance refs/remotes/trunk,
+# refs/remotes/RELEASE_5_11). Otherwise they will be fetched again from
+# scratch.
+
+# Re-create Subversion-tracking branches from all remote "origin"-tracking
+# branches
+git for-each-ref --format='%(refname)' "refs/remotes/$ORIGIN" |
+grep -vF -e "refs/remotes/$ORIGIN/HEAD" -e "refs/remotes/$ORIGIN/master" |
+sed -n "s:^refs/remotes/$ORIGIN:refs/remotes:p" |
+git show-ref --exclude-existing |
+while read -r branch; do
+    echo "Restoring \"$branch\""
+    git update-ref -m "Restore Subversion-tracking branch from \"$ORIGIN\"" \
+        "$branch" "refs/remotes/$ORIGIN/${branch#refs/remotes/}"
+done
 
 git svn init svn://svn.savannah.nongnu.org/avrdude --trunk=trunk/avrdude
 git config --add svn-remote.svn.tags "tags/*/avrdude:refs/tags/*"
-git config --add svn-remote.svn.branches \
-    "branches/{RELEASE_5_11}/avrdude:refs/remotes/*"
+git config --add svn-remote.svn.branches "branches/*/avrdude:refs/remotes/*"
 
-# Misplaced?
+# Misplaced tag
 git config --add svn-remote.svn.tags "{RELEASE_5_10_0}/avrdude:refs/tags/*"
 
-# "RELEASE_5_11_0" in top-level directory just duplicates the proper tag
+# The "RELEASE_5_11_0" directory in the top level just duplicates the proper
+# tag, so it is ignored
 
 # Mine previous authors. Missing ones may be found in the "ChangeLog" file.
 git rev-list --all --format='%cn <%ce>' |
 sort | uniq |
+
+# Extract Subversion author as username from Git committer email, so that
+# "NAME <USER@DOMAIN>" becomes "USER = NAME <USER@DOMAIN>"
 sed -n 's/^.* <\(.*\)@>$/\1 = &/p' > svn.authors
 
+# Expect messages like the following for each re-created tracking branch and
+# tag found:
+#     Rebuilding .git/svn/<REF>/.rev_map.<UUID> ...
+#     r<REV> = <HASH>
+#     [. . .]
+#     Done rebuilding <REV MAP>
+#
+# Messages like the following are new imported revisions, however:
+#         <STATUS>  <FILE>
+#         [. . .]
+#     r<REV> = <HASH> (<REF>)
 git svn fetch --authors-file=svn.authors
 
 # TODO: remove "git-svn" tags where "@REV" was appended?
@@ -27,5 +56,5 @@ git svn fetch --authors-file=svn.authors
     #~ esac
 #~ done
 
-# Inhibit erroneous copy of 5.9
+# Inhibit erroneous copy of 5.9 and subsequent revert
 git tag --force RELEASE_5_8_0 52f8831
