@@ -13,8 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -29,11 +28,14 @@
 
 #define MAX_STR_CONST 1024
 
-enum { V_NONE, V_NUM, V_STR };
+enum { V_NONE, V_NUM, V_NUM_REAL, V_STR };
 typedef struct value_t {
   int      type;
-  double   number;
-  char   * string;
+  /*union { TODO: use an anonymous union here ? */
+    int      number;
+    double   number_real;
+    char   * string;
+  /*};*/
 } VALUE;
 
 
@@ -90,6 +92,8 @@ void free_token(TOKEN * tkn);
 void free_tokens(int n, ...);
 
 TOKEN * number(char * text);
+
+TOKEN * number_real(char * text);
 
 TOKEN * hexnumber(char * text);
 

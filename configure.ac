@@ -13,8 +13,7 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
 #
@@ -85,7 +84,7 @@ if test x$have_libelf = xyes; then
                ;;
    esac
    AC_DEFINE([HAVE_LIBELF])
-   AC_CHECK_HEADERS([libelf.h])
+   AC_CHECK_HEADERS([libelf.h libelf/libelf.h])
 fi
 AC_SUBST(LIBELF, $LIBELF)
 
@@ -148,12 +147,25 @@ fi
 AC_SUBST(LIBUSB_1_0, $LIBUSB_1_0)
 AH_TEMPLATE([HAVE_LIBFTDI],
             [Define if FTDI support is enabled via libftdi])
+AH_TEMPLATE([HAVE_LIBFTDI_TYPE_232H],
+            [Define if libftdi supports FT232H, libftdi version >= 0.20])
 AC_CHECK_LIB([ftdi], [ftdi_usb_get_strings], [have_libftdi=yes], [], [-lusb])
 if test x$have_libftdi = xyes; then
-   LIBFTDI="-lftdi -lusb -lpthread"
+   LIBFTDI="-lftdi -lusb"
    AC_DEFINE([HAVE_LIBFTDI])
+   AC_CHECK_DECL(TYPE_232H,[have_libftdi_FT232H=yes], [], [[#include <ftdi.h>]])
+   if test x$have_libftdi_FT232H = xyes; then
+      AC_DEFINE([HAVE_LIBFTDI_TYPE_232H])
+   fi
 fi
 AC_SUBST(LIBFTDI, $LIBFTDI)
+AC_CHECK_HEADERS([pthread.h])
+# as there exits header file only pthread implementations for Windows, check if we have a library
+AC_CHECK_LIB([pthread], [pthread_create], [have_pthread=yes])
+if test x$have_pthread = xyes; then
+   LIBPTHREAD="-lpthread"
+fi
+AC_SUBST(LIBPTHREAD, $LIBPTHREAD)
 # Checks for header files.
 AC_CHECK_HEADERS([limits.h stdlib.h string.h])
 AC_CHECK_HEADERS([fcntl.h sys/ioctl.h sys/time.h termios.h unistd.h])
@@ -260,6 +272,18 @@ AC_ARG_ENABLE(
 		*)   AC_MSG_ERROR(bad value ${enableval} for enable-parport option) ;;
 		esac],
 	[enabled_parport=yes])
+	
+AC_ARG_ENABLE(
+	[linuxgpio],
+	AC_HELP_STRING(
+		[--enable-linuxgpio],
+		[Enable the Linux sysfs GPIO interface programmer type]),
+	[case "${enableval}" in
+		yes) enabled_linuxgpio=yes ;;
+		no)  enabled_linuxgpio=no ;;
+		*)   AC_MSG_ERROR(bad value ${enableval} for enable-linuxgpio option) ;;
+		esac],
+	[enabled_linuxgpio=no])	
 
 DIST_SUBDIRS_AC='doc windows'
 
@@ -328,6 +352,15 @@ if test "$enabled_parport" = "yes"; then
 else
 	confsubst="-e /^@HAVE_PARPORT_BEGIN@/,/^@HAVE_PARPORT_END@/d"
 fi
+
+
+if test "$enabled_linuxgpio" = "yes"; then
+	AC_DEFINE(HAVE_LINUXGPIO, 1, [Linux sysfs GPIO support enabled])
+	confsubst="$confsubst -e /^@HAVE_LINUXGPIO_/d"
+else
+	confsubst="$confsubst -e /^@HAVE_LINUXGPIO_BEGIN@/,/^@HAVE_LINUXGPIO_END@/d"
+fi
+
 
 # If we are compiling with gcc, enable all warning and make warnings errors.
 if test "$GCC" = yes; then
@@ -426,3 +459,63 @@ AC_CONFIG_FILES([avrdude.conf.tmp:avrdude.conf.in],
 		[confsubst="$confsubst"])
 
 AC_OUTPUT
+
+echo ""
+echo ""
+echo "Configuration summary:"
+echo "----------------------"
+
+if test x$have_libelf = xyes; then
+   echo "DO HAVE    libelf"
+else
+   echo "DON'T HAVE libelf"
+fi
+
+if test x$have_libusb = xyes; then
+   echo "DO HAVE    libusb"
+else
+   echo "DON'T HAVE libusb"
+fi
+
+if test x$have_libusb_1_0 = xyes; then
+   echo "DO HAVE    libusb_1_0"
+else
+   echo "DON'T HAVE libusb_1_0"
+fi
+
+if test x$have_libftdi = xyes; then
+   echo "DO HAVE    libftdi"
+else
+   echo "DON'T HAVE libftdi"
+fi
+
+if test x$have_libhid = xyes; then
+   echo "DO HAVE    libhid"
+else
+   echo "DON'T HAVE libhid"
+fi
+
+if test x$have_pthread = xyes; then
+   echo "DO HAVE    pthread"
+else
+   echo "DON'T HAVE pthread"
+fi
+
+if test x$enabled_doc = xyes; then
+   echo "ENABLED    doc"
+else
+   echo "DISABLED   doc"
+fi
+
+if test x$enabled_parport = xyes; then
+   echo "ENABLED    parport"
+else
+   echo "DISABLED   parport"
+fi
+
+if test x$enabled_linuxgpio = xyes; then
+   echo "ENABLED    linuxgpio"
+else
+   echo "DISABLED   linuxgpio"
+fi
+

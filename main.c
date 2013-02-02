@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -315,11 +314,8 @@ int main(int argc, char * argv [])
   /* options / operating mode variables */
   int     erase;       /* 1=erase chip, 0=don't */
   int     calibrate;   /* 1=calibrate RC oscillator, 0=don't */
-  int     auto_erase;  /* 0=never erase unless explicity told to do
-                          so, 1=erase if we are going to program flash */
   char  * port;        /* device port (/dev/xxx) */
   int     terminal;    /* 1=enter terminal mode, 0=don't */
-  int     nowrite;     /* don't actually write anything to the chip */
   int     verify;      /* perform a verify operation */
   char  * exitspecs;   /* exit specs string from command line */
   char  * programmer;  /* programmer id */
@@ -336,6 +332,7 @@ int main(int argc, char * argv [])
   int     silentsafe;  /* Don't ask about fuses, 1=silent, 0=normal */
   int     init_ok;     /* Device initialization worked well */
   int     is_open;     /* Device open succeeded */
+  enum updateflags uflags = UF_AUTO_ERASE; /* Flags for do_op() */
   unsigned char safemode_lfuse = 0xff;
   unsigned char safemode_hfuse = 0xff;
   unsigned char safemode_efuse = 0xff;
@@ -397,11 +394,9 @@ int main(int argc, char * argv [])
   port          = NULL;
   erase         = 0;
   calibrate     = 0;
-  auto_erase    = 1;
   p             = NULL;
   ovsigck       = 0;
   terminal      = 0;
-  nowrite       = 0;
   verify        = 1;        /* on by default */
   quell_progress = 0;
   exitspecs     = NULL;
@@ -508,11 +503,12 @@ int main(int argc, char * argv [])
         break;
 
       case 'D': /* disable auto erase */
-        auto_erase = 0;
+        uflags &= ~UF_AUTO_ERASE;
         break;
 
       case 'e': /* perform a chip erase */
         erase = 1;
+        uflags &= ~UF_AUTO_ERASE;
         break;
 
       case 'E':
@@ -524,7 +520,7 @@ int main(int argc, char * argv [])
         break;
 
       case 'n':
-        nowrite = 1;
+        uflags |= UF_NOWRITE;
         break;
 
       case 'O': /* perform RC oscillator calibration */
@@ -844,7 +840,6 @@ int main(int argc, char * argv [])
 
   if(p->flags & AVRPART_AVR32) {
     safemode = 0;
-    auto_erase = 0;
   }
 
   if(p->flags & (AVRPART_HAS_PDI | AVRPART_HAS_TPI)) {
@@ -857,6 +852,30 @@ int main(int argc, char * argv [])
     fprintf(stderr, "\n%s: failed to initialize memories\n",
             progname);
     exit(1);
+  }
+
+  /*
+   * Now that we know which part we are going to program, locate any
+   * -U options using the default memory region, and fill in the
+   * device-dependent default region name, either "application" (for
+   * Xmega devices), or "flash" (everything else).
+   */
+  for (ln=lfirst(updates); ln; ln=lnext(ln)) {
+    upd = ldata(ln);
+    if (upd->memtype == NULL) {
+      const char *mtype = (p->flags & AVRPART_HAS_PDI)? "application": "flash";
+      if (verbose >= 2) {
+        fprintf(stderr,
+                "%s: defaulting memtype in -U %c:%s option to \"%s\"\n",
+                progname,
+                (upd->op == DEVICE_READ)? 'r': (upd->op == DEVICE_WRITE)? 'w': 'v',
+                upd->filename, mtype);
+      }
+      if ((upd->memtype = strdup(mtype)) == NULL) {
+        fprintf(stderr, "%s: out of memory\n", progname);
+        exit(1);
+      }
+    }
   }
 
   /*
@@ -989,6 +1008,11 @@ int main(int argc, char * argv [])
    * are valid.
    */
   if(!(p->flags & AVRPART_AVR32)) {
+    int attempt = 0;
+    int waittime = 10000;       /* 10 ms */
+
+  sig_again:
+    usleep(waittime);
     if (init_ok) {
       rc = avr_signature(pgm, p);
       if (rc != 0) {
@@ -1022,11 +1046,17 @@ int main(int argc, char * argv [])
         if (sig->buf[i] != 0x00)
           zz = 0;
       }
-      if (quell_progress < 2) {
-        fprintf(stderr, "\n");
-      }
-
       if (ff || zz) {
+        if (++attempt < 3) {
+          waittime *= 5;
+          if (quell_progress < 2) {
+              fprintf(stderr, " (retrying)\n");
+          }
+          goto sig_again;
+        }
+        if (quell_progress < 2) {
+            fprintf(stderr, "\n");
+        }
         fprintf(stderr,
                 "%s: Yikes!  Invalid device signature.\n", progname);
         if (!ovsigck) {
@@ -1037,23 +1067,27 @@ int main(int argc, char * argv [])
           exitrc = 1;
           goto main_exit;
         }
+      } else {
+        if (quell_progress < 2) {
+          fprintf(stderr, "\n");
+        }
       }
-    }
-    
-    if (sig->size != 3 ||
-    sig->buf[0] != p->signature[0] ||
-    sig->buf[1] != p->signature[1] ||
-    sig->buf[2] != p->signature[2]) {
-      fprintf(stderr,
-          "%s: Expected signature for %s is %02X %02X %02X\n",
-          progname, p->desc,
-          p->signature[0], p->signature[1], p->signature[2]);
-      if (!ovsigck) {
-        fprintf(stderr, "%sDouble check chip, "
-        "or use -F to override this check.\n",
-                progbuf);
-        exitrc = 1;
-        goto main_exit;
+
+      if (sig->size != 3 ||
+          sig->buf[0] != p->signature[0] ||
+          sig->buf[1] != p->signature[1] ||
+          sig->buf[2] != p->signature[2]) {
+        fprintf(stderr,
+                "%s: Expected signature for %s is %02X %02X %02X\n",
+                progname, p->desc,
+                p->signature[0], p->signature[1], p->signature[2]);
+        if (!ovsigck) {
+          fprintf(stderr, "%sDouble check chip, "
+                  "or use -F to override this check.\n",
+                  progbuf);
+          exitrc = 1;
+          goto main_exit;
+        }
       }
     }
   }
@@ -1092,23 +1126,36 @@ int main(int argc, char * argv [])
     }
   }
 
-  if ((erase == 0) && (auto_erase == 1)) {
-    AVRMEM * m;
-    for (ln=lfirst(updates); ln; ln=lnext(ln)) {
-      upd = ldata(ln);
-      m = avr_locate_mem(p, upd->memtype);
-      if (m == NULL)
-        continue;
-      if ((strcasecmp(m->desc, "flash") == 0) && (upd->op == DEVICE_WRITE)) {
-        erase = 1;
-        if (quell_progress < 2) {
-          fprintf(stderr,
-                "%s: NOTE: FLASH memory has been specified, an erase cycle "
-                "will be performed\n"
-                "%sTo disable this feature, specify the -D option.\n",
-                progname, progbuf);
+  if (uflags & UF_AUTO_ERASE) {
+    if ((p->flags & AVRPART_HAS_PDI) && pgm->page_erase != NULL &&
+        lsize(updates) > 0) {
+      if (quell_progress < 2) {
+        fprintf(stderr,
+                "%s: NOTE: Programmer supports page erase for Xmega devices.\n"
+                "%sEach page will be erased before programming it, but no chip erase is performed.\n"
+                "%sTo disable page erases, specify the -D option; for a chip-erase, use the -e option.\n",
+                progname, progbuf, progbuf);
+      }
+    } else {
+      AVRMEM * m;
+      const char *memname = (p->flags & AVRPART_HAS_PDI)? "application": "flash";
+      for (ln=lfirst(updates); ln; ln=lnext(ln)) {
+        upd = ldata(ln);
+        m = avr_locate_mem(p, upd->memtype);
+        if (m == NULL)
+          continue;
+        if ((strcasecmp(m->desc, memname) == 0) && (upd->op == DEVICE_WRITE)) {
+          erase = 1;
+          uflags &= ~UF_AUTO_ERASE;
+          if (quell_progress < 2) {
+            fprintf(stderr,
+                    "%s: NOTE: \"%s\" memory has been specified, an erase cycle "
+                    "will be performed\n"
+                    "%sTo disable this feature, specify the -D option.\n",
+                    progname, memname, progbuf);
+          }
+          break;
         }
-        break;
       }
     }
   }
@@ -1160,7 +1207,7 @@ int main(int argc, char * argv [])
      * erase the chip's flash and eeprom memories, this is required
      * before the chip can accept new programming
      */
-    if (nowrite) {
+    if (uflags & UF_NOWRITE) {
       fprintf(stderr,
 	      "%s: conflicting -e and -n options specified, NOT erasing chip\n",
 	      progname);
@@ -1191,7 +1238,7 @@ int main(int argc, char * argv [])
 
   for (ln=lfirst(updates); ln; ln=lnext(ln)) {
     upd = ldata(ln);
-    rc = do_op(pgm, p, upd, nowrite);
+    rc = do_op(pgm, p, upd, uflags);
     if (rc) {
       exitrc = 1;
       break;

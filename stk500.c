@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -559,37 +558,40 @@ static int stk500_initialize(PROGRAMMER * pgm, AVRPART * p)
 
   if (n_extparms) {
     if ((p->pagel == 0) || (p->bs2 == 0)) {
-      fprintf(stderr, 
-              "%s: please define PAGEL and BS2 signals in the configuration "
-              "file for part %s\n", 
-              progname, p->desc);
+      if (verbose > 1)
+          fprintf(stderr,
+                  "%s: PAGEL and BS2 signals not defined in the configuration "
+                  "file for part %s, using dummy values\n",
+                  progname, p->desc);
+      buf[2] = 0xD7;            /* they look somehow possible, */
+      buf[3] = 0xA0;            /* don't they? ;) */
     }
     else {
-      buf[0] = n_extparms+1;
-
-      /*
-       * m is currently pointing to eeprom memory if the part has it
-       */
-      if (m)
-        buf[1] = m->page_size;
-      else
-        buf[1] = 0;
-      
       buf[2] = p->pagel;
       buf[3] = p->bs2;
-      
-      if (n_extparms == 4) {
-        if (p->reset_disposition == RESET_DEDICATED)
-          buf[4] = 0;
-        else
-          buf[4] = 1;
-      }
-      
-      rc = stk500_set_extended_parms(pgm, n_extparms+1, buf);
-      if (rc) {
-        fprintf(stderr, "%s: stk500_initialize(): failed\n", progname);
-        exit(1);
-      }
+    }
+    buf[0] = n_extparms+1;
+
+    /*
+     * m is currently pointing to eeprom memory if the part has it
+     */
+    if (m)
+      buf[1] = m->page_size;
+    else
+      buf[1] = 0;
+
+
+    if (n_extparms == 4) {
+      if (p->reset_disposition == RESET_DEDICATED)
+        buf[4] = 0;
+      else
+        buf[4] = 1;
+    }
+
+    rc = stk500_set_extended_parms(pgm, n_extparms+1, buf);
+    if (rc) {
+      fprintf(stderr, "%s: stk500_initialize(): failed\n", progname);
+      exit(1);
     }
   }
 

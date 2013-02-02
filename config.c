@@ -13,8 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -122,7 +121,7 @@ void free_token(TOKEN * tkn)
         tkn->value.string = NULL;
         break;
     }
-    
+
     free(tkn);
   }
 }
@@ -149,15 +148,29 @@ TOKEN * number(char * text)
 
   tkn = new_token(TKN_NUMBER);
   tkn->value.type   = V_NUM;
-  tkn->value.number = atof(text);
+  tkn->value.number = atoi(text);
 
 #if DEBUG
-  fprintf(stderr, "NUMBER(%g)\n", tkn->value.number);
+  fprintf(stderr, "NUMBER(%d)\n", tkn->value.number);
 #endif
 
   return tkn;
 }
 
+TOKEN * number_real(char * text)
+{
+  struct token_t * tkn;
+
+  tkn = new_token(TKN_NUMBER);
+  tkn->value.type   = V_NUM_REAL;
+  tkn->value.number_real = atof(text);
+
+#if DEBUG
+  fprintf(stderr, "NUMBER(%g)\n", tkn->value.number_real);
+#endif
+
+  return tkn;
+}
 
 TOKEN * hexnumber(char * text)
 {
@@ -223,16 +236,20 @@ void print_token(TOKEN * tkn)
 
   fprintf(stderr, "token = %d = ", tkn->primary);
   switch (tkn->value.type) {
-    case V_NUM: 
-      fprintf(stderr, "NUMBER, value=%g", tkn->value.number); 
+    case V_NUM:
+      fprintf(stderr, "NUMBER, value=%d", tkn->value.number);
       break;
 
-    case V_STR: 
-      fprintf(stderr, "STRING, value=%s", tkn->value.string); 
+    case V_NUM_REAL:
+      fprintf(stderr, "NUMBER, value=%g", tkn->value.number_real);
       break;
 
-    default: 
-      fprintf(stderr, "<other>"); 
+    case V_STR:
+      fprintf(stderr, "STRING, value=%s", tkn->value.string);
+      break;
+
+    default:
+      fprintf(stderr, "<other>");
       break;
   }
 

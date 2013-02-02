@@ -18,8 +18,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -34,6 +33,7 @@
 #include "ac_cfg.h"
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -78,6 +78,12 @@ struct pdata
 
   /* The length of the device descriptor is firmware-dependent. */
   size_t device_descriptor_length;
+
+  /* Start address of Xmega boot area */
+  unsigned long boot_start;
+
+  /* Major firmware version (needed for Xmega programming) */
+  unsigned int fwver;
 };
 
 #define PDATA(pgm) ((struct pdata *)(pgm->cookie))
@@ -138,6 +144,8 @@ static void jtagmkII_print_parms1(PROGRAMMER * pgm, const char * p);
 static int jtagmkII_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
                                 unsigned int page_size,
                                 unsigned int addr, unsigned int n_bytes);
+static unsigned char jtagmkII_memtype(PROGRAMMER * pgm, AVRPART * p, unsigned long addr);
+static unsigned int jtagmkII_memaddr(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m, unsigned long addr);
 
 // AVR32
 #define ERROR_SAB 0xFFFFFFFF
@@ -285,7 +293,7 @@ static void jtagmkII_prmsg(PROGRAMMER * pgm, unsigned char * data, size_t len)
       if (i % 16 == 15)
 	putc('\n', stderr);
       else
-	putchar(' ');
+	putc(' ', stderr);
     }
     if (i % 16 != 0)
       putc('\n', stderr);
@@ -719,6 +727,7 @@ int jtagmkII_getsync(PROGRAMMER * pgm, int mode) {
     if (status > 0) {
       if ((c = resp[0]) == RSP_SIGN_ON) {
 	fwver = ((unsigned)resp[8] << 8) | (unsigned)resp[7];
+        PDATA(pgm)->fwver = fwver;
 	hwver = (unsigned)resp[9];
 	memcpy(PDATA(pgm)->serno, resp + 10, 6);
 	if (verbose >= 1 && status > 17) {
@@ -983,10 +992,13 @@ static void jtagmkII_set_devdescr(PROGRAMMER * pgm, AVRPART * p)
   for (ln = lfirst(p->mem); ln; ln = lnext(ln)) {
     m = ldata(ln);
     if (strcmp(m->desc, "flash") == 0) {
-      PDATA(pgm)->flash_pagesize = m->page_size;
+      if (m->page_size > 256)
+        PDATA(pgm)->flash_pagesize = 256;
+      else
+        PDATA(pgm)->flash_pagesize = m->page_size;
       u32_to_b4(sendbuf.dd.ulFlashSize, m->size);
-      u16_to_b2(sendbuf.dd.uiFlashPageSize, PDATA(pgm)->flash_pagesize);
-      u16_to_b2(sendbuf.dd.uiFlashpages, m->size / PDATA(pgm)->flash_pagesize);
+      u16_to_b2(sendbuf.dd.uiFlashPageSize, m->page_size);
+      u16_to_b2(sendbuf.dd.uiFlashpages, m->size / m->page_size);
       if (p->flags & AVRPART_HAS_DW) {
 	memcpy(sendbuf.dd.ucFlashInst, p->flash_instr, FLASH_INSTR_SIZE);
 	memcpy(sendbuf.dd.ucEepromInst, p->eeprom_instr, EEPROM_INSTR_SIZE);
@@ -1025,6 +1037,86 @@ static void jtagmkII_set_devdescr(PROGRAMMER * pgm, AVRPART * p)
   if (c != RSP_OK) {
     fprintf(stderr,
 	    "%s: jtagmkII_set_devdescr(): "
+	    "bad response to set device descriptor command: %s\n",
+	    progname, jtagmkII_get_rc(c));
+  }
+}
+
+static void jtagmkII_set_xmega_params(PROGRAMMER * pgm, AVRPART * p)
+{
+  int status;
+  unsigned char *resp, c;
+  LNODEID ln;
+  AVRMEM * m;
+  struct {
+    unsigned char cmd;
+    struct xmega_device_desc dd;
+  } sendbuf;
+
+  memset(&sendbuf, 0, sizeof sendbuf);
+  sendbuf.cmd = CMND_SET_XMEGA_PARAMS;
+  u16_to_b2(sendbuf.dd.whatever, 0x0002);
+  sendbuf.dd.datalen = 47;
+  u16_to_b2(sendbuf.dd.nvm_base_addr, p->nvm_base);
+  u16_to_b2(sendbuf.dd.mcu_base_addr, p->mcu_base);
+
+  for (ln = lfirst(p->mem); ln; ln = lnext(ln)) {
+    m = ldata(ln);
+    if (strcmp(m->desc, "flash") == 0) {
+      if (m->page_size > 256)
+        PDATA(pgm)->flash_pagesize = 256;
+      else
+        PDATA(pgm)->flash_pagesize = m->page_size;
+      u16_to_b2(sendbuf.dd.flash_page_size, m->page_size);
+    } else if (strcmp(m->desc, "eeprom") == 0) {
+      sendbuf.dd.eeprom_page_size = m->page_size;
+      u16_to_b2(sendbuf.dd.eeprom_size, m->size);
+      u32_to_b4(sendbuf.dd.nvm_eeprom_offset, m->offset);
+    } else if (strcmp(m->desc, "application") == 0) {
+      u32_to_b4(sendbuf.dd.app_size, m->size);
+      u32_to_b4(sendbuf.dd.nvm_app_offset, m->offset);
+    } else if (strcmp(m->desc, "boot") == 0) {
+      u16_to_b2(sendbuf.dd.boot_size, m->size);
+      u32_to_b4(sendbuf.dd.nvm_boot_offset, m->offset);
+    } else if (strcmp(m->desc, "fuse1") == 0) {
+      u32_to_b4(sendbuf.dd.nvm_fuse_offset, m->offset & ~7);
+    } else if (strcmp(m->desc, "lock") == 0) {
+      u32_to_b4(sendbuf.dd.nvm_lock_offset, m->offset);
+    } else if (strcmp(m->desc, "usersig") == 0) {
+      u32_to_b4(sendbuf.dd.nvm_user_sig_offset, m->offset);
+    } else if (strcmp(m->desc, "prodsig") == 0) {
+      u32_to_b4(sendbuf.dd.nvm_prod_sig_offset, m->offset);
+    } else if (strcmp(m->desc, "data") == 0) {
+      u32_to_b4(sendbuf.dd.nvm_data_offset, m->offset);
+    }
+  }
+
+  if (verbose >= 2)
+    fprintf(stderr, "%s: jtagmkII_set_xmega_params(): "
+	    "Sending set Xmega params command: ",
+	    progname);
+  jtagmkII_send(pgm, (unsigned char *)&sendbuf, sizeof sendbuf);
+
+  status = jtagmkII_recv(pgm, &resp);
+  if (status <= 0) {
+    if (verbose >= 2)
+      putc('\n', stderr);
+    fprintf(stderr,
+	    "%s: jtagmkII_set_xmega_params(): "
+	    "timeout/error communicating with programmer (status %d)\n",
+	    progname, status);
+    return;
+  }
+  if (verbose >= 3) {
+    putc('\n', stderr);
+    jtagmkII_prmsg(pgm, resp, status);
+  } else if (verbose == 2)
+    fprintf(stderr, "0x%02x (%d bytes msg)\n", resp[0], status);
+  c = resp[0];
+  free(resp);
+  if (c != RSP_OK) {
+    fprintf(stderr,
+	    "%s: jtagmkII_set_xmega_params(): "
 	    "bad response to set device descriptor command: %s\n",
 	    progname, jtagmkII_get_rc(c));
   }
@@ -1280,11 +1372,6 @@ static int jtagmkII_initialize(PROGRAMMER * pgm, AVRPART * p)
   }
 
   /*
-   * Must set the device descriptor before entering programming mode.
-   */
-  jtagmkII_set_devdescr(pgm, p);
-
-  /*
    * If this is an ATxmega device in JTAG mode, change the emulator
    * mode from JTAG to JTAG_XMEGA.
    */
@@ -1292,6 +1379,45 @@ static int jtagmkII_initialize(PROGRAMMER * pgm, AVRPART * p)
       (p->flags & AVRPART_HAS_PDI)) {
     if (jtagmkII_getsync(pgm, EMULATOR_MODE_JTAG_XMEGA) < 0)
       return -1;
+  }
+  /*
+   * Must set the device descriptor before entering programming mode.
+   */
+  if (PDATA(pgm)->fwver >= 0x700 && (p->flags & AVRPART_HAS_PDI) != 0)
+    jtagmkII_set_xmega_params(pgm, p);
+  else
+    jtagmkII_set_devdescr(pgm, p);
+
+  PDATA(pgm)->boot_start = ULONG_MAX;
+  /*
+   * If this is an ATxmega device in JTAG mode, change the emulator
+   * mode from JTAG to JTAG_XMEGA.
+   */
+  if ((pgm->flag & PGM_FL_IS_JTAG) &&
+      (p->flags & AVRPART_HAS_PDI)) {
+    /*
+     * Find out where the border between application and boot area
+     * is.
+     */
+    AVRMEM *bootmem = avr_locate_mem(p, "boot");
+    AVRMEM *flashmem = avr_locate_mem(p, "flash");
+    if (bootmem == NULL || flashmem == NULL) {
+      fprintf(stderr,
+              "%s: jtagmkII_initialize(): Cannot locate \"flash\" and \"boot\" memories in description\n",
+              progname);
+    } else {
+      if (PDATA(pgm)->fwver < 0x700) {
+        /* V7+ firmware does not need this anymore */
+        unsigned char par[4];
+
+        u32_to_b4(par, flashmem->offset);
+        (void) jtagmkII_setparm(pgm, PAR_PDI_OFFSET_START, par);
+        u32_to_b4(par, bootmem->offset);
+        (void) jtagmkII_setparm(pgm, PAR_PDI_OFFSET_END, par);
+      }
+
+      PDATA(pgm)->boot_start = bootmem->offset - flashmem->offset;
+    }
   }
 
   free(PDATA(pgm)->flash_pagecache);
@@ -1309,8 +1435,22 @@ static int jtagmkII_initialize(PROGRAMMER * pgm, AVRPART * p)
   }
   PDATA(pgm)->flash_pageaddr = PDATA(pgm)->eeprom_pageaddr = (unsigned long)-1L;
 
-  if (jtagmkII_reset(pgm, 0x01) < 0)
-    return -1;
+  if (PDATA(pgm)->fwver >= 0x700 && (p->flags & AVRPART_HAS_PDI)) {
+    /*
+     * Work around for
+     * https://savannah.nongnu.org/bugs/index.php?37942
+     *
+     * Firmware version 7.24 (at least) on the Dragon behaves very
+     * strange when it gets a RESET request here.  All subsequent
+     * responses are completely off, so the emulator becomes unusable.
+     * This appears to be a firmware bug (earlier versions, at least
+     * 7.14, didn't experience this), but by omitting the RESET for
+     * Xmega devices, we can work around it.
+     */
+  } else {
+    if (jtagmkII_reset(pgm, 0x01) < 0)
+      return -1;
+  }
 
   if ((pgm->flag & PGM_FL_IS_JTAG) && !(p->flags & AVRPART_HAS_PDI)) {
     strcpy(hfuse.desc, "hfuse");
@@ -1416,6 +1556,10 @@ static int jtagmkII_open(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_JTAGICEMKII;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -1463,6 +1607,10 @@ static int jtagmkII_open_dw(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_JTAGICEMKII;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -1510,6 +1658,10 @@ static int jtagmkII_open_pdi(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_JTAGICEMKII;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -1558,6 +1710,10 @@ static int jtagmkII_dragon_open(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_AVRDRAGON;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -1606,6 +1762,10 @@ static int jtagmkII_dragon_open_dw(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_AVRDRAGON;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -1654,6 +1814,10 @@ static int jtagmkII_dragon_open_pdi(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_AVRDRAGON;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -1685,8 +1849,8 @@ void jtagmkII_close(PROGRAMMER * pgm)
   if (verbose >= 2)
     fprintf(stderr, "%s: jtagmkII_close()\n", progname);
 
-  if (PDATA(pgm)->device_descriptor_length) {
-    /* When in JTAG mode, restart target. */
+  if (pgm->flag & PGM_FL_IS_PDI) {
+    /* When in PDI mode, restart target. */
     buf[0] = CMND_GO;
     if (verbose >= 2)
       fprintf(stderr, "%s: jtagmkII_close(): Sending GO command: ",
@@ -1752,6 +1916,107 @@ void jtagmkII_close(PROGRAMMER * pgm)
   pgm->fd.ifd = -1;
 }
 
+static int jtagmkII_page_erase(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
+                               unsigned int addr)
+{
+  unsigned char cmd[6];
+  unsigned char *resp;
+  int status, tries;
+  long otimeout = serial_recv_timeout;
+
+  if (verbose >= 2)
+    fprintf(stderr, "%s: jtagmkII_page_erase(.., %s, 0x%x)\n",
+	    progname, m->desc, addr);
+
+  if (!(p->flags & AVRPART_HAS_PDI)) {
+    fprintf(stderr, "%s: jtagmkII_page_erase: not an Xmega device\n",
+	    progname);
+    return -1;
+  }
+  if ((pgm->flag & PGM_FL_IS_DW)) {
+    fprintf(stderr, "%s: jtagmkII_page_erase: not applicable to debugWIRE\n",
+	    progname);
+    return -1;
+  }
+
+  if (jtagmkII_program_enable(pgm) < 0)
+    return -1;
+
+  cmd[0] = CMND_XMEGA_ERASE;
+  if (strcmp(m->desc, "flash") == 0) {
+    if (jtagmkII_memtype(pgm, p, addr) == MTYPE_FLASH)
+      cmd[1] = XMEGA_ERASE_APP_PAGE;
+    else
+      cmd[1] = XMEGA_ERASE_BOOT_PAGE;
+  } else if (strcmp(m->desc, "eeprom") == 0) {
+    cmd[1] = XMEGA_ERASE_EEPROM_PAGE;
+  } else if ( ( strcmp(m->desc, "usersig") == 0 ) ) {
+    cmd[1] = XMEGA_ERASE_USERSIG;
+  } else if ( ( strcmp(m->desc, "boot") == 0 ) ) {
+    cmd[1] = XMEGA_ERASE_BOOT_PAGE;
+  } else {
+    cmd[1] = XMEGA_ERASE_APP_PAGE;
+  }
+  serial_recv_timeout = 100;
+
+  /*
+   * Don't use jtagmkII_memaddr() here.  While with all other
+   * commands, firmware 7+ doesn't require the NVM offsets being
+   * applied, the erase page commands make an exception, and do
+   * require the NVM offsets as part of the (page) address.
+   */
+  u32_to_b4(cmd + 2, addr + m->offset);
+
+  tries = 0;
+
+  retry:
+  if (verbose >= 2)
+    fprintf(stderr, "%s: jtagmkII_page_erase(): "
+            "Sending xmega erase command: ",
+            progname);
+  jtagmkII_send(pgm, cmd, sizeof cmd);
+
+  status = jtagmkII_recv(pgm, &resp);
+  if (status <= 0) {
+    if (verbose >= 2)
+      putc('\n', stderr);
+    if (verbose >= 1)
+      fprintf(stderr,
+              "%s: jtagmkII_page_erase(): "
+              "timeout/error communicating with programmer (status %d)\n",
+              progname, status);
+    if (tries++ < 4) {
+      serial_recv_timeout *= 2;
+      goto retry;
+    }
+    fprintf(stderr,
+            "%s: jtagmkII_page_erase(): fatal timeout/"
+            "error communicating with programmer (status %d)\n",
+            progname, status);
+    serial_recv_timeout = otimeout;
+    return -1;
+  }
+  if (verbose >= 3) {
+    putc('\n', stderr);
+    jtagmkII_prmsg(pgm, resp, status);
+  } else if (verbose == 2)
+    fprintf(stderr, "0x%02x (%d bytes msg)\n", resp[0], status);
+  if (resp[0] != RSP_OK) {
+    fprintf(stderr,
+            "%s: jtagmkII_page_erase(): "
+            "bad response to xmega erase command: %s\n",
+            progname, jtagmkII_get_rc(resp[0]));
+    free(resp);
+    serial_recv_timeout = otimeout;
+    return -1;
+  }
+  free(resp);
+
+  serial_recv_timeout = otimeout;
+
+  return 0;
+}
+
 static int jtagmkII_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
                                 unsigned int page_size,
                                 unsigned int addr, unsigned int n_bytes)
@@ -1760,8 +2025,7 @@ static int jtagmkII_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
   unsigned int maxaddr = addr + n_bytes;
   unsigned char *cmd;
   unsigned char *resp;
-  unsigned char par[4];
-  int status, tries;
+  int status, tries, dynamic_memtype = 0;
   long otimeout = serial_recv_timeout;
 
   if (verbose >= 2)
@@ -1772,25 +2036,21 @@ static int jtagmkII_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
     return -1;
 
   if (page_size == 0) page_size = 256;
+  else if (page_size > 256) page_size = 256;
 
   if ((cmd = malloc(page_size + 10)) == NULL) {
     fprintf(stderr, "%s: jtagmkII_paged_write(): Out of memory\n",
 	    progname);
     return -1;
   }
-  if ( p->flags & AVRPART_HAS_PDI )
-  {
-   u32_to_b4( par, m->offset );
-   (void) jtagmkII_setparm( pgm, PAR_PDI_OFFSET_START, par );
-   u32_to_b4( par, m->offset + m->size );
-   (void) jtagmkII_setparm( pgm, PAR_PDI_OFFSET_END, par );
-  }
 
   cmd[0] = CMND_WRITE_MEMORY;
-  cmd[1] = ( p->flags & AVRPART_HAS_PDI ) ? MTYPE_FLASH : MTYPE_FLASH_PAGE;
   if (strcmp(m->desc, "flash") == 0) {
     PDATA(pgm)->flash_pageaddr = (unsigned long)-1L;
-    page_size = PDATA(pgm)->flash_pagesize;
+    cmd[1] = jtagmkII_memtype(pgm, p, addr);
+    if (p->flags & AVRPART_HAS_PDI)
+      /* dynamically decide between flash/boot memtype */
+      dynamic_memtype = 1;
   } else if (strcmp(m->desc, "eeprom") == 0) {
     if (pgm->flag & PGM_FL_IS_DW) {
       /*
@@ -1809,7 +2069,14 @@ static int jtagmkII_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
     }
     cmd[1] = ( p->flags & AVRPART_HAS_PDI ) ? MTYPE_EEPROM : MTYPE_EEPROM_PAGE;
     PDATA(pgm)->eeprom_pageaddr = (unsigned long)-1L;
-    page_size = PDATA(pgm)->eeprom_pagesize;
+  } else if ( ( strcmp(m->desc, "usersig") == 0 ) ) {
+    cmd[1] = MTYPE_USERSIG;
+  } else if ( ( strcmp(m->desc, "boot") == 0 ) ) {
+    cmd[1] = MTYPE_BOOT_FLASH;
+  } else if ( p->flags & AVRPART_HAS_PDI ) {
+    cmd[1] = MTYPE_FLASH;
+  } else {
+    cmd[1] = MTYPE_SPM;
   }
   serial_recv_timeout = 100;
   for (; addr < maxaddr; addr += page_size) {
@@ -1822,8 +2089,11 @@ static int jtagmkII_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
 	      "block_size at addr %d is %d\n",
 	      progname, addr, block_size);
 
+    if (dynamic_memtype)
+      cmd[1] = jtagmkII_memtype(pgm, p, addr);
+
     u32_to_b4(cmd + 2, page_size);
-    u32_to_b4(cmd + 6, addr+m->offset );
+    u32_to_b4(cmd + 6, jtagmkII_memaddr(pgm, p, m, addr));
 
     /*
      * The JTAG ICE will refuse to write anything but a full page, at
@@ -1897,7 +2167,7 @@ static int jtagmkII_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
   unsigned int maxaddr = addr + n_bytes;
   unsigned char cmd[10];
   unsigned char *resp;
-  int status, tries;
+  int status, tries, dynamic_memtype = 0;
   long otimeout = serial_recv_timeout;
 
   if (verbose >= 2)
@@ -1910,8 +2180,12 @@ static int jtagmkII_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
   page_size = m->readsize;
 
   cmd[0] = CMND_READ_MEMORY;
-  cmd[1] = ( p->flags & AVRPART_HAS_PDI ) ? MTYPE_FLASH : MTYPE_FLASH_PAGE;
-  if (strcmp(m->desc, "eeprom") == 0) {
+  if (strcmp(m->desc, "flash") == 0) {
+    cmd[1] = jtagmkII_memtype(pgm, p, addr);
+    if (p->flags & AVRPART_HAS_PDI)
+      /* dynamically decide between flash/boot memtype */
+      dynamic_memtype = 1;
+  } else if (strcmp(m->desc, "eeprom") == 0) {
     cmd[1] = ( p->flags & AVRPART_HAS_PDI ) ? MTYPE_EEPROM : MTYPE_EEPROM_PAGE;
     if (pgm->flag & PGM_FL_IS_DW)
       return -1;
@@ -1919,6 +2193,12 @@ static int jtagmkII_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
     cmd[1] = MTYPE_PRODSIG;
   } else if ( ( strcmp(m->desc, "usersig") == 0 ) ) {
     cmd[1] = MTYPE_USERSIG;
+  } else if ( ( strcmp(m->desc, "boot") == 0 ) ) {
+    cmd[1] = MTYPE_BOOT_FLASH;
+  } else if ( p->flags & AVRPART_HAS_PDI ) {
+    cmd[1] = MTYPE_FLASH;
+  } else {
+    cmd[1] = MTYPE_SPM;
   }
   serial_recv_timeout = 100;
   for (; addr < maxaddr; addr += page_size) {
@@ -1931,8 +2211,11 @@ static int jtagmkII_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
 	      "block_size at addr %d is %d\n",
 	      progname, addr, block_size);
 
+    if (dynamic_memtype)
+      cmd[1] = jtagmkII_memtype(pgm, p, addr);
+
     u32_to_b4(cmd + 2, block_size);
-    u32_to_b4(cmd + 6, addr+m->offset );
+    u32_to_b4(cmd + 6, jtagmkII_memaddr(pgm, p, m, addr));
 
     tries = 0;
 
@@ -2005,8 +2288,11 @@ static int jtagmkII_read_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
 
   addr += mem->offset;
   cmd[1] = ( p->flags & AVRPART_HAS_PDI ) ? MTYPE_FLASH : MTYPE_FLASH_PAGE;
-  if (strcmp(mem->desc, "flash") == 0) {
-    pagesize = mem->page_size;
+  if (strcmp(mem->desc, "flash") == 0 ||
+      strcmp(mem->desc, "application") == 0 ||
+      strcmp(mem->desc, "apptable") == 0 ||
+      strcmp(mem->desc, "boot") == 0) {
+    pagesize = PDATA(pgm)->flash_pagesize;
     paddr = addr & ~(pagesize - 1);
     paddr_ptr = &PDATA(pgm)->flash_pageaddr;
     cache_ptr = PDATA(pgm)->flash_pagecache;
@@ -2504,6 +2790,44 @@ static void jtagmkII_print_parms(PROGRAMMER * pgm)
 {
   jtagmkII_print_parms1(pgm, "");
 }
+
+static unsigned char jtagmkII_memtype(PROGRAMMER * pgm, AVRPART * p, unsigned long addr)
+{
+  if ( p->flags & AVRPART_HAS_PDI ) {
+    if (addr >= PDATA(pgm)->boot_start)
+      return MTYPE_BOOT_FLASH;
+    else
+      return MTYPE_FLASH;
+  } else {
+    return MTYPE_FLASH_PAGE;
+  }
+}
+
+static unsigned int jtagmkII_memaddr(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m, unsigned long addr)
+{
+  /*
+   * Xmega devices handled by V7+ firmware don't want to be told their
+   * m->offset within the write memory command.
+   */
+  if (PDATA(pgm)->fwver >= 0x700 && (p->flags & AVRPART_HAS_PDI) != 0) {
+    if (addr >= PDATA(pgm)->boot_start)
+      /*
+       * all memories but "flash" are smaller than boot_start anyway, so
+       * no need for an extra check we are operating on "flash"
+       */
+      return addr - PDATA(pgm)->boot_start;
+    else
+      /* normal flash, or anything else */
+      return addr;
+  }
+  /*
+   * Old firmware, or non-Xmega device.  Non-Xmega (and non-AVR32)
+   * devices always have an m->offset of 0, so we don't have to
+   * distinguish them here.
+   */
+  return addr + m->offset;
+}
+
 
 #ifdef __OBJC__
 #pragma mark -
@@ -3125,6 +3449,10 @@ static int jtagmkII_open32(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_JTAGICEMKII;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -3602,6 +3930,7 @@ void jtagmkII_initpgm(PROGRAMMER * pgm)
    */
   pgm->paged_write    = jtagmkII_paged_write;
   pgm->paged_load     = jtagmkII_paged_load;
+  pgm->page_erase     = jtagmkII_page_erase;
   pgm->print_parms    = jtagmkII_print_parms;
   pgm->set_sck_period = jtagmkII_set_sck_period;
   pgm->parseextparams = jtagmkII_parseextparms;
@@ -3668,6 +3997,7 @@ void jtagmkII_pdi_initpgm(PROGRAMMER * pgm)
    */
   pgm->paged_write    = jtagmkII_paged_write;
   pgm->paged_load     = jtagmkII_paged_load;
+  pgm->page_erase     = jtagmkII_page_erase;
   pgm->print_parms    = jtagmkII_print_parms;
   pgm->setup          = jtagmkII_setup;
   pgm->teardown       = jtagmkII_teardown;
@@ -3700,6 +4030,7 @@ void jtagmkII_dragon_initpgm(PROGRAMMER * pgm)
    */
   pgm->paged_write    = jtagmkII_paged_write;
   pgm->paged_load     = jtagmkII_paged_load;
+  pgm->page_erase     = jtagmkII_page_erase;
   pgm->print_parms    = jtagmkII_print_parms;
   pgm->set_sck_period = jtagmkII_set_sck_period;
   pgm->parseextparams = jtagmkII_parseextparms;
@@ -3800,6 +4131,7 @@ void jtagmkII_dragon_pdi_initpgm(PROGRAMMER * pgm)
    */
   pgm->paged_write    = jtagmkII_paged_write;
   pgm->paged_load     = jtagmkII_paged_load;
+  pgm->page_erase     = jtagmkII_page_erase;
   pgm->print_parms    = jtagmkII_print_parms;
   pgm->setup          = jtagmkII_setup;
   pgm->teardown       = jtagmkII_teardown;

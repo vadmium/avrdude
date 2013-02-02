@@ -16,8 +16,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 
@@ -70,8 +69,22 @@
 #include "bitbang.h"
 #include "ft245r.h"
 
+#ifdef HAVE_PTHREAD_H
+
 #include <pthread.h>
+
+#ifdef __APPLE__
+/* Mac OS X defines sem_init but actually does not implement them */
+#include <dispatch/dispatch.h>
+
+typedef dispatch_semaphore_t	sem_t;
+
+#define sem_init(psem,x,val)	*psem = dispatch_semaphore_create(val)
+#define sem_post(psem)		dispatch_semaphore_signal(*psem)
+#define sem_wait(psem)		dispatch_semaphore_wait(*psem, DISPATCH_TIME_FOREVER)
+#else
 #include <semaphore.h>
+#endif
 
 #ifdef HAVE_LIBFTDI
 
@@ -128,6 +141,7 @@ static void *reader (void *arg) {
     int br, i;
 
     while (1) {
+        pthread_testcancel();
         br = ftdi_read_data (handle, buf, sizeof(buf));
         for (i=0; i<br; i++)
             add_to_buf (buf[i]);
@@ -829,6 +843,26 @@ void ft245r_initpgm(PROGRAMMER * pgm) {
     strcpy(pgm->type, "ftdi_syncbb");
     pgm->open = ft245r_noftdi_open;
 }
+#endif
+#else
+
+static int ft245r_nopthread_open (struct programmer_t *pgm, char * name) {
+    fprintf(stderr,
+            "%s: error: no pthread support. Please compile again with pthread installed."
+#if defined(_WIN32)
+            " See http://sourceware.org/pthreads-win32/."
+#endif
+            "\n",
+            progname);
+
+    exit(1);
+}
+
+void ft245r_initpgm(PROGRAMMER * pgm) {
+    strcpy(pgm->type, "ftdi_syncbb");
+    pgm->open = ft245r_nopthread_open;
+}
+
 #endif
 
 const char ft245r_desc[] = "FT245R/FT232R Synchronous BitBangMode Programmer";

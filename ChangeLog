@@ -1,272 +1,70 @@
-2012-02-11  Rene Liebscher <R.Liebscher@gmx.de>
+2013-01-30  Rene Liebscher <R.Liebscher@gmx.de>
 
-	patch #7718: Merge global data of avrftdi in a private data structure
-	* avrftdi.[ch]: moved global data into private data structure, moved
-	private defines from header file into source file
+	patch #7724 Add TPI support for Bus Pirate using bitbang mode
+	* buspirate.[ch]: added support for BusPirate Bitbanging
+	* pgm_type.c: added entry for buspirate_bb
+	* avrdude.conf.in: added entry for buspirate_bb
 
-2012-02-06  Rene Liebscher <R.Liebscher@gmx.de>
+2013-01-30  Rene Liebscher <R.Liebscher@gmx.de>
 
-	patch #7720 Bug in EEPROM write
-	* avrftdi.c: fixed wrong buffer address initialization in paged_write
-	
-	* fileio.c: added #include <stdint.h>
+	patch #7936 Patch to support BusPirate AVR Extended Commands mode
+	* buspirate.c: added support for BusPirate AVR Extended Commands mode
+	* avrdude.1: added doc for nopagedread parameter
+	* doc/avrdude.texi: added doc for nopagedread parameter
 
-2012-02-05  Rene Liebscher <R.Liebscher@gmx.de>
+2013-01-30  Rene Liebscher <R.Liebscher@gmx.de>
 
-	bug #30559 Ft232 bit-bang support
-	* ft245r.c: cancel reader thread before exiting program
+	patch #7723 Bus Pirate “raw-wire” mode which can run down to 5 kHz
+	* buspirate.c: added raw wire mode
+	* avrdude.1: added doc for rawfreq parameter
+	* doc/avrdude.texi: added doc for rawfreq parameter
 
-2012-02-04  Rene Liebscher <R.Liebscher@gmx.de>
+2013-01-30  Rene Liebscher <R.Liebscher@gmx.de>
 
-	patch #7717 avrftdi_flash_write is broken
-	* avrftdi.c: fixed wrong buffer address initialization in paged_write
-	bug #35296 Extraneous newlines in output.
-	* main.c: fixed output of newlines at 100% progress
+	bug #37977 Support for Openmoko Debug Board
+	* avrdude.conf.in: added openmoko entry
 
-2012-02-03  Rene Liebscher <R.Liebscher@gmx.de>
+2013-01-29  Rene Liebscher <R.Liebscher@gmx.de>
 
-	patch #7715 FT4232H support
-	* avrdude.conf.in: added programmer 4232h
+	patch #7932 Read USBtiny VID and PID from avrdude.conf if provided.
+	* avrdude.conf.in: added usbpid, usbvid to usbtiny
+	* usbtiny.[ch]: use usbpid, usbpid if provided in config file
 
-2012-02-03  Rene Liebscher <R.Liebscher@gmx.de>
+2013-01-26  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
 
-	patch #7687: Autogenerating programmers and parts lists for docs
-	(generating the programmers lists)
-	* doc/avrdude.texi: Add include of generated table of programmers
-	* doc/Makefile.am: Add generating of table of programmers in programmers.texi
+	bug #38172: avrftdi: Incorrect information in avrdude.conf
+	* avrdude.conf.in (avrftdi): fix comments about ACBUS vs. ADBUS;
+	add a comment that the MPSSE signals are fixed by the FTDI
+	hardware and cannot be changed
 
-2012-02-03  Rene Liebscher <R.Liebscher@gmx.de>
+2013-01-09  Rene Liebscher <R.Liebscher@gmx.de>
 
-	bug #34768 Proposition: Change the name of the AVR32 devices
-	* avrdude.conf.in: renamed ucr2 to uc3a0512
-	* avrpart.c: added cast to avoid compiler warning
+	patch #7165 Add support for bitbanging GPIO lines using the Linux sysf GPIO interface
+	* doc/avrdude.texi,avrdude.1: added doc for linuxgpio 
+	* avrdude.conf.in: added template for linuxgpio programmer
+	* config_gram.y: pin numbers restricted to [PIN_MIN, PIN_MAX]
+	* pindefs.h: added PIN_MIN, PIN_MAX, removed unused LED_ON/OFF
+	* configure.ac: configure option enable-linuxgpio, print of enabled options
+	* linuxgpio.[ch]: new source for linuxgpio programmer
+	* Makefile.am: added linuxgpio to sources list
+	* pgm_type.c: added linuxgpio to programmer types list
 
-2012-02-03  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
+2013-01-08  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
 
-	* fileio.c (fileio_elf): Fix a copy'n-paste-o.
+	* jtagmkI.c (jtagmkI_prmsg): replace a putchar() by putc(...stderr)
+	* jtagmkII.c (jtagmkII_prmsg): (Dito.)
+	* jtag3.c (jtag3_prevent, jtag3_prmsg): (Dito.)
 
-2012-02-03  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
+2013-01-02  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
 
-	* par.c (par_desc): Move to end of file, outside the #if
-	HAVE_PARPORT
+	* usb_libusb.c (usbdev_open): Downgrade the max transfer size for
+	the main data endpoints when being forced so by the USB; this can
+	happen when attaching the JTAGICE3 to a USB 1.1 connection
+	* jtag3.c (jtag3_initialize): When detecting a downgraded max
+	transfer size on the JTAGICE3 (presumably, due to being connected
+	to USB 1.1 only), bail out as its firmware cannot properly handle
+	this (by now)
 
-2012-02-02  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
+2013-01-02  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
 
-	Implement ELF file reading (finally).  Requires libelf(3) to be
-	present on the host system.
-	* configure.ac (HAVE_LIBELF): Add logic to detect presence of
-	libelf(3)
-	* Makefile.am (avrdude_LDADD): Add @LIBELF@
-	* fileio.h (FILEFMT): add FMT_ELF
-	* fileio.c: Implement ELF file reader.
-	* update.c (parse_op): add 'e' format specifier
-	* avrdude.1: Document the ELF file reading capability
-	* doc/avrdude.texi: (Dito.)
-
-2012-02-01  Rene Liebscher <R.Liebscher@gmx.de>
-
-	bug #30559 Ft232 bit-bang support
-	* ft245r.[ch]: new programmer type implementation
-	* configure.ac: add pthread as link library
-	* avrdude.conf.in: added some new programmers
-	* Makefile.am: added new source files to compile
-	* pindefs.h: change PIN_MASK, PIN_INVERSE to highest bit of unsigned int
-	* pgm.[ch]: added generic function to print pin assignments (taken from par.c)
-	* par.c: moved pin assigment print function to pgm.c
-
-2012-02-01  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
-
-	* lexer.l: Sort keyword tokens into alphabetic order.
-
-2012-01-31  Rene Liebscher <R.Liebscher@gmx.de>
-
-	* config_gram.y, lexer.l: removed unused ID/TKN_ID definitions
-	* config.[hc]: removed unused function id(), use value.type to select
-	               values
-
-2012-01-31  Rene Liebscher <R.Liebscher@gmx.de>
-
-	patch #7437 modifications to Bus Pirate module
-	patch #7686 Updating buspirate ascii mode to current firmware, use AUX
-	            as clock generator, and setting of serial receive timeout
-	* buspirate.c: added paged_write, changed binary mode setup/detection,
-	  added clock output on AUX pin
-	* avrdude.1: updated documentation
-	* doc/avrdude.texi: updated documentation
-
-2012-01-31  Rene Liebscher <R.Liebscher@gmx.de>
-
-	Parser does not need to know all programmer types now, new programmers
-	will update only the table in pgm_type.c.
-	* config_gram.y, lexer.l: removed programmer type keywords,
-	use now locate_programmer_type() function
-	* pgm_type.[ch]: added new files for table of programmer types
-	* main.c: allow list of programmer types by -c ?type
-	* avrdude.conf.in: changed all type keywords to quoted strings
-	* doc/avrdude.texi: changed description of type definition, list
-	of valid types is now included from generated file
-	* doc/Makefile.am: generate list of programmer types for doc
-	* all programmers [hc]: add xxx_desc string for description of programmer
-
-2012-01-30  Rene Liebscher <R.Liebscher@gmx.de>
-
-	* configure.ac: fixed detection of yylex_destroy availability
-	by checking the version number of flex; bump required autoconf
-	version to 2.60 (for AC_PROG_SED)
-
-2012-01-30  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
-
-	* lexer.l: Replace the old, now-defunct #define YY_NO_UNPUT by
-	the new %option nounput.  This gets rid of a compiler warning.
-
-2012-01-30  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
-
-	Add a connection_type attribute to each programmer, rather than
-	trying to hard-code the default port name in main.c.
-	* pgm.h: Add conntype to struct pgm.
-	* lexer.l: Extend grammar for connection_type.
-	* config_gram.y: (Dito.)
-	* config.h: Add DEFAULT_USB, for symmetry with default_parallel
-	and default_serial.
-	* main.c: Replace old default portname hack by avrdude.conf-based
-	knowledge.
-	* usbtiny.c: Drop an old hack that's no longer necessary.
-	* avrdude.conf.in: Add connection_type to each programmer
-	definition.
-
-2012-01-27  Rene Liebscher <R.Liebscher@gmx.de>
-
-	* avrdude.conf.in: used parent parts for some other parts, added 
-	abstract .xmega part as parent for xmegas
-	* main.c: hide parts starting with '.' from parts list
-
-2012-01-22  Rene Liebscher <R.Liebscher@gmx.de>
-
-	patch #7688: Implement parent programmers feature
-	* avrdude.conf.in: updated documentation comment and some programmers 
-	have now parents
-	* config_gram.y: initpgm will now called at first use of programmer 
-	in main. parser sets only the function pointer in the pgm structure.
-	Pin and pin lists definitions can now be empty to remove the parents
-	setting.
-	* doc/avrdude.texi: updated documentation
-	* main.c: added call to pgm->initpgm after locate_programmer
-	* pgm.[hc]: added field initpgm in structure, added function pgm_dup
-
-2012-01-21  Rene Liebscher <R.Liebscher@gmx.de>
-
-	bug #21797: AT90PWM316: New part description
-	* avrdude.conf.in: added pwm316 with parent pwm3b but 16KB flash
-
-2012-01-20  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
-
-	* configure.ac: Check for presence of lusb_usb.h as an alternative
-	to usb.h; libusb-win32 switched to this name in version 1.2.5.0.
-	* avrftdi.c: Decide whether to include <usb.h>, or <lusb0_usb.h>.
-	* ser_avrdoper.c: (Dito.)
-	* usbasp.c: (Dito.)
-	* usb_libusb.c: (Dito.)
-	* usbtiny.c: (Dito.)
-
-2012-01-19  Rene Liebscher <R.Liebscher@gmx.de>
-
-	* avr.c: Unsigned variable was used for return code of paged_write/load
-	functions. So a negative return code led never to a fallback to byte
-	functions.
-
-2012-01-17  Rene Liebscher <R.Liebscher@gmx.de>
-
-	bug #34302: Feature request : device configuration with parent classes
-	* config_gram.y: if memory section is overwritten old entry is removed
-	
-	(not in original patch)
-	* config_gram.y: if programmer or part is defined twice, a warning is
-	output and the first instance is removed
-	
-	General cleanup and free functions, so valgrind does not report any lost
-	blocks at program end.
-	* avrpart.[hc]: added avr_free_(opcode|mem|part) functions
-	* pgm.[hc]: added pgm_free function
-	* update.[hc]: added free_update functions
-	* config.[hc]: added cleanup_config function, use yylex_destroy to reset
-	the lexer after usage. (So it can be reused.)
-	* main.c: add cleanup_main function which is called by atexit() (This 
-	frees all lists so that at program exit only really lost memory is 
-	reported by valgrind.)
-	* usbasp.c: added libusb_free_device_list() and libusb_exit() calls to
-	avoid lost memory
-	* buspirate.c: moved memory allocation from initpgm to setup and added 
-	free in teardown
-	* configure.ac: add definition of HAVE_YYLEX_DESTROY if $LEX is flex.
-	* Makefile.am: added . in front of SUBDIRS to build avrdude before trying
-	to use it for creating the part list for the docs.
-
-2012-01-17  Rene Liebscher <R.Liebscher@gmx.de>
-
-	* usbasp.c: USB vid/pid/vendor/product from config file are used, for
-	id "usbasp" nibobee and old usbasp are tried as they were currently
-	implemented within usbasp
-	* avrdude.conf.in: added usb params to "usbasp", added new entry "nibobee"
-	with params which were hardcoded in usbasp.c, and added an entry
-	"usbasb-clone" which only checks vid/pid.
-
-2012-01-10  Rene Liebscher <R.Liebscher@gmx.de>
-
-	bug #35261 avrftdi uses wrong interface in avrftdi_paged_(write|load)
-	* avrftdi.c: Fixed interface and implementation of avrftdi_paged_(write|load)
-	patch #7672 adding support for O-Link (FTDI based JTAG) as programmer
-	* avrdude.conf.in: added o-link entry
-
-2012-01-10  Rene Liebscher <R.Liebscher@gmx.de>
-
-	patch #7699 Read additional config files
-	* main.c: Added reading of additional config files
-	* avrdude.1: updated man page
-	* doc/avrdude.texi: updated documentation
-
-2012-01-10  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
-
-	Submitted by Bob Frazier:
-	bug #35208: avrdude 5.11 on freebsd 8.2-STABLE does not reset
-	Arduino Uno properly
-	* arduino.c (arduino_open): Bump the timeout between pulling
-	the DTR and RTS lines low and high.
-
-2012-01-08  Rene Liebscher <R.Liebscher@gmx.de>
-
-	Fixed following findings reported by cppcheck
-	* avr910.c:625 (error) Possible null pointer dereference: cmd - otherwise it is redundant to check if cmd is null at line 624
-	* avr910.c:626 (error) Possible null pointer dereference: cmd - otherwise it is redundant to check if cmd is null at line 624
-	* avr910.c:168 (information) The scope of the variable 'devtype_1st' can be reduced
-	* avr910.c:169 (information) The scope of the variable 'dev_supported' can be reduced
-	* avrftdi.c:647 (error) Using sizeof for array given as function argument returns the size of pointer.
-	* stk500v2.c:3347 (error) Memory leak: b
-	* stk500v2.c:3452 (error) Memory leak: b
-	* usbasp.c:554 (error) Using sizeof for array given as function argument returns the size of pointer.
-	* usbasp.c:485 (information) The scope of the variable 'dly' can be reduced
-
-2012-01-03  Joerg Wunsch <j.gnu@uriah.heep.sax.de>
-
-	Reported by Jason Kotzin:
-	* usbasp.c (usbasp_spi_paged_load, usbasp_spi_paged_write):
-	Fix buffer address calculation.
-
-2012-01-03  Rene Liebscher <R.Liebscher@gmx.de>
-
-	patch #7629 add support for atmega48p
-	* avrdude.conf.in: Added m48p with parent m48 + different signature
-	
-	* avrdude.conf.in: made part parents (m88p = m88 + different signature,
-	m168p = m168 + different signature)
-
-2012-01-02  Rene Liebscher <R.Liebscher@gmx.de>
-
-	bug #21663 AT90PWM efuse incorrect
-	bug #30438 efuse bits written as 0 on at90pwmxx parts
-	* avrdude.conf.in: (pwm2, pwm2b, pwm3, pwm3b) <efuse.write>: Write 
-	eight bits
-	
-	* avrdude.conf.in: made part parents (pwm3 = pwm2, pwm3b = pwm2b, 
-	pwm2b = pwm2 + different signature)
-	
-	* ChangeLog-2011: New file, rotate ChangeLog for new year.
+	* ChangeLog: annual ChangeLog rotation time

@@ -38,6 +38,9 @@
 #       usbsn    = <serialno>;                      # USB Serial Number
 #
 #        To invert a bit, use = ~ <num>, the spaces are important.
+#        For a pin list all pins must be inverted.
+#        A single pin can be specified as usual = ~ <num>, for lists
+#        specify it as follows = ~ ( <num> [, <num2> ... ] ) .
 #     ;
 #
 #   part
@@ -326,7 +329,7 @@
 #
 default_parallel   = "@DEFAULT_PAR_PORT@";
 default_serial     = "@DEFAULT_SER_PORT@";
-# default_bitclock = 2.5
+# default_bitclock = 2.5;
 
 
 #
@@ -363,6 +366,11 @@ programmer
 # The drivers will look for a specific device and use the first one found.
 # If you have mulitple devices, then look for unique information (like SN)
 # And fill that in here.
+#
+# Note that the pin numbers for the main ISP signals (reset, sck,
+# mosi, miso) are fixed and cannot be changed, since they must match
+# the way the Multi-Protocol Synchronous Serial Engine (MPSSE) of
+# these FTDI ICs has been designed.
 
 programmer
   id         = "avrftdi";
@@ -375,17 +383,17 @@ programmer
   usbproduct = "";
   usbdev     = "A";
   usbsn      = "";
-#ISP-signals - lower ACBUS-Nibble (default)
+#ISP-signals - lower ADBUS-Nibble (default)
   reset  = 4;
   sck    = 1;
   mosi   = 2;
   miso   = 3;
-#LED SIGNALs - higher ACBUS-Nibble
+#LED SIGNALs - higher ADBUS-Nibble
 #  errled = 5;
 #  rdyled = 6;
 #  pgmled = 7;
 #  vfyled = 8;
-#Buffer Signal - ADBUS - Nibble
+#Buffer Signal - ACBUS - Nibble
 #  buff   = 9;
 ;
 # This is an implementation of the above with a buffer IC (74AC244) and
@@ -473,6 +481,45 @@ programmer parent "jtagkey"
   usbproduct = "USB<=>JTAG&RS232";
 ;
 
+# http://wiki.openmoko.org/wiki/Debug_Board_v3
+programmer
+  id    = "openmoko";
+  desc  = "Openmoko debug board (v3)";
+  type  = "avrftdi";
+  usbvid     = 0x1457;
+  usbpid    = 0x5118;
+  usbdev = "A";
+  usbvendor  = "";
+  usbproduct = "";
+  usbsn      = "";
+  reset  = 4; # TMS 7
+  sck    = 1; # TCK 9
+  mosi   = 2; # TDI 5
+  miso   = 3; # TDO 13
+;
+
+# Only Rev. A boards.
+# Schematic and user manual: http://www.cs.put.poznan.pl/wswitala/download/pdf/811EVBK.pdf
+programmer
+  id         = "lm3s811";
+  desc       = "Luminary Micro LM3S811 Eval Board (Rev. A)";
+  type       = "avrftdi";
+  connection_type = usb;
+  usbvid     = 0x0403;
+  usbpid     = 0xbcd9;
+  usbvendor  = "LMI";
+  usbproduct = "LM3S811 Evaluation Board";
+  usbdev     = "A";
+  usbsn      = "";
+#ISP-signals - lower ACBUS-Nibble (default)
+  reset  = 4;
+  sck    = 1;
+  mosi   = 2;
+  miso   = 3;
+# Enable correct buffers
+  buff   = ~8;
+;
+
 programmer
   id    = "avrisp";
   desc  = "Atmel AVR ISP";
@@ -503,6 +550,20 @@ programmer
   desc  = "The Bus Pirate";
   type  = "buspirate";
   connection_type = serial;
+;
+
+programmer
+  id    = "buspirate_bb";
+  desc  = "The Bus Pirate (bitbang interface, supports TPI)";
+  type  = "buspirate_bb";
+  connection_type = serial;
+  # pins are bits in bitbang byte (numbers are 87654321)
+  # 1|POWER|PULLUP|AUX|MOSI|CLK|MISO|CS
+  reset  = 1;
+  sck    = 3;
+  mosi   = 4;
+  miso   = 2;
+  #vcc    = 7; This is internally set independent of this setting.
 ;
 
 # This is supposed to be the "default" STK500 entry.
@@ -684,6 +745,8 @@ programmer
   desc  = "USBtiny simple USB programmer, http://www.ladyada.net/make/usbtinyisp/";
   type  = "usbtiny";
   connection_type = usb;
+  usbvid     = 0x1781;
+  usbpid     = 0x0c9f;
 ;
 
 programmer
@@ -867,10 +930,46 @@ programmer
 ;
 
 programmer
+  id    = "jtag3";
+  desc  = "Atmel AVR JTAGICE3 in JTAG mode";
+  type  = "jtagice3";
+  connection_type = usb;
+;
+
+programmer
+  id    = "jtag3pdi";
+  desc  = "Atmel AVR JTAGICE3 in PDI mode";
+  type  = "jtagice3_pdi";
+  connection_type = usb;
+;
+
+programmer
+  id    = "jtag3dw";
+  desc  = "Atmel AVR JTAGICE3 in debugWIRE mode";
+  type  = "jtagice3_dw";
+  connection_type = usb;
+;
+
+programmer
+  id    = "jtag3isp";
+  desc  = "Atmel AVR JTAGICE3 in ISP mode";
+  type  = "jtagice3_isp";
+  connection_type = usb;
+;
+
+
+programmer
   id    = "pavr";
   desc  = "Jason Kyle's pAVR Serial Programmer";
   type  = "avr910";
   connection_type = serial;
+;
+
+programmer
+  id    = "pickit2";
+  desc  = "MicroChip's PICkit2 Programmer";
+  type  = "pickit2";
+  connection_type = usb;
 ;
 
 @HAVE_PARPORT_BEGIN@  Inclusion of the following depends on --enable-parport
@@ -1058,7 +1157,7 @@ programmer
 ;
 
 # It is almost same as pony-stk200, except vcc on pin 5 to auto
-# disconnect port (download on http://electropol.free.fr)
+# disconnect port (download on http://electropol.free.fr/spip/spip.php?article27)
 programmer parent "pony-stk200"
   id    = "frank-stk200";
   desc  = "Frank STK200";
@@ -1081,7 +1180,28 @@ programmer
 
 @HAVE_PARPORT_END@
 
+#This programmer bitbangs GPIO lines using the Linux sysfs GPIO interface
 #
+#To enable it set the configuration below to match the GPIO lines connected to the
+#relevant ISP header pins and uncomment the entry definition. In case you don't
+#have the required permissions to edit this system wide config file put the
+#entry in a separate <your name>.conf file and use it with -C+<your name>.conf
+#on the command line.
+#
+#To check if your avrdude build has support for the linuxgpio programmer compiled in,
+#use -c?type on the command line and look for linuxgpio in the list. If it's not available
+#you need pass the --enable-linuxgpio=yes option to configure and recompile avrdude.
+#
+#programmer
+#  id    = "linuxgpio";
+#  desc  = "Use the Linux sysfs interface to bitbang GPIO lines";
+#  type  = "linuxgpio";
+#  reset = ?;
+#  sck   = ?;
+#  mosi  = ?;
+#  miso  = ?;
+#;
+
 # some ultra cheap programmers use bitbanging on the 
 # serialport.
 #
@@ -1419,6 +1539,8 @@ part
     chiperasetime       = 0;
     programfusepolltimeout = 25;
     programlockpolltimeout = 25;
+
+    ocdrev              = 0;
 
     memory "eeprom"
         size            = 64;
@@ -2905,6 +3027,8 @@ part
     spmcr               = 0x68;
     allowfullpagebitstream = yes;
 
+    ocdrev              = 2;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 8;  /* for parallel programming */
@@ -3087,6 +3211,8 @@ part
     rampz               = 0x3b;
     allowfullpagebitstream = yes;
 
+    ocdrev              = 1;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 8;  /* for parallel programming */
@@ -3265,6 +3391,8 @@ part
     rampz               = 0x3b;
     eecr                = 0x3f;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -3456,6 +3584,8 @@ part
     eecr                = 0x3f;
     allowfullpagebitstream = no;
 
+    ocdrev              = 3;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 8;  /* for parallel programming */
@@ -3646,6 +3776,8 @@ part
     eecr                = 0x3f;
     allowfullpagebitstream = no;
 
+    ocdrev              = 3;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 8;  /* for parallel programming */
@@ -3835,6 +3967,8 @@ part
     spmcr               = 0x57;
     allowfullpagebitstream = yes;
 
+    ocdrev              = 2;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 4;  /* for parallel programming */
@@ -3972,6 +4106,8 @@ part parent "m16"
     poweroffdelay       = 15;
     resetdelayms        = 1;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
   ;
 
 
@@ -4031,6 +4167,8 @@ part
     idr                 = 0x31;
     spmcr               = 0x57;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -4176,6 +4314,8 @@ part parent "m324p"
     id               = "m324pa";
     desc             = "ATmega324PA";
     signature        = 0x1e 0x95 0x11;
+
+    ocdrev              = 3;
   ;
 
 
@@ -4235,6 +4375,8 @@ part
     idr                 = 0x31;
     spmcr               = 0x57;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -4379,6 +4521,8 @@ part parent "m644"
     id               = "m644p";
     desc             = "ATmega644P";
     signature        = 0x1e 0x96 0x0a;
+
+    ocdrev              = 3;
   ;
 
 
@@ -4439,6 +4583,8 @@ part
     idr                 = 0x31;
     spmcr               = 0x57;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -4599,6 +4745,8 @@ part
 
     chip_erase       = "1 0 1 0  1 1 0 0    1 0 0 x  x x x x",
                        "x x x x  x x x x    x x x x  x x x x";
+
+    ocdrev              = 2;
 
     memory "flash"
         paged           = yes;
@@ -4980,6 +5128,8 @@ part
     idr                 = 0x31;
     spmcr               = 0x57;
 
+    ocdrev              = 2;
+
    memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 4;  /* for parallel programming */
@@ -5161,6 +5311,8 @@ part
     idr                 = 0x31;
     spmcr               = 0x57;
 
+    ocdrev              = 3;
+
    memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 4;  /* for parallel programming */
@@ -5301,6 +5453,8 @@ part parent "m329"
     id               = "m329p";
     desc             = "ATmega329P";
     signature        = 0x1e 0x95 0x0b;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -5313,6 +5467,8 @@ part parent "m329"
     id               = "m3290";
     desc             = "ATmega3290";
     signature        = 0x1e 0x95 0x04;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -5325,6 +5481,8 @@ part parent "m3290"
     id               = "m3290p";
     desc             = "ATmega3290P";
     signature        = 0x1e 0x95 0x0c;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -5378,6 +5536,8 @@ part
 
     idr                 = 0x31;
     spmcr               = 0x57;
+
+    ocdrev              = 3;
 
    memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -5520,6 +5680,8 @@ part parent "m649"
     id               = "m6490";
     desc             = "ATmega6490";
     signature        = 0x1e 0x96 0x04;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -5576,6 +5738,8 @@ part
     idr                 = 0x31;
     spmcr               = 0x57;
     allowfullpagebitstream = yes;
+
+    ocdrev              = 2;
 
    memory "eeprom"
         paged           = no;   /* leave this "no" */
@@ -6527,6 +6691,8 @@ part
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
 
+    ocdrev              = 1;
+
     memory "eeprom"
         paged           = no;
         size            = 128;
@@ -6715,6 +6881,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 1;
 
     memory "eeprom"
         paged           = no;
@@ -6905,6 +7073,8 @@ part
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
 
+    ocdrev              = 1;
+
     memory "eeprom"
         paged           = no;
         size            = 512;
@@ -7093,6 +7263,8 @@ part
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
 
+    ocdrev              = 1;
+
     memory "eeprom"
         paged           = no;
         page_size       = 4;
@@ -7231,6 +7403,8 @@ part parent "m48"
     id               = "m48p";
     desc             = "ATmega48P";
     signature        = 0x1e 0x92 0x0a;
+
+    ocdrev              = 1;
   ;
 
 #------------------------------------------------------------
@@ -7288,6 +7462,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 1;
 
     memory "eeprom"
         paged           = no;
@@ -7427,6 +7603,8 @@ part parent "m88"
     id               = "m88p";
     desc             = "ATmega88P";
     signature        = 0x1e 0x93 0x0f;
+
+    ocdrev              = 1;
   ;
 
 #------------------------------------------------------------
@@ -7484,6 +7662,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 1;
 
     memory "eeprom"
         paged           = no;
@@ -7625,6 +7805,8 @@ part parent "m168"
     id              = "m168p";
     desc            = "ATmega168P";
     signature       = 0x1e 0x94 0x0b;
+
+    ocdrev              = 1;
 ;
 
 #------------------------------------------------------------
@@ -7682,6 +7864,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 1;
 
     memory "eeprom"
         paged           = no;
@@ -7869,6 +8053,8 @@ part
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
 
+    ocdrev              = 1;
+
     memory "eeprom"
 	paged		= no;
 	page_size	= 4;
@@ -8005,6 +8191,8 @@ part parent "m328"
     id			= "m328p";
     desc		= "ATmega328P";
     signature		= 0x1e 0x95 0x0F;
+
+    ocdrev              = 1;
 ;
 
 #------------------------------------------------------------
@@ -8064,6 +8252,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 0;
 
      memory "eeprom"
          size            = 128;
@@ -8251,6 +8441,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 0;
 
      memory "eeprom"
          size            = 256;
@@ -8578,6 +8770,8 @@ part parent "pwm2"
      id            = "pwm2b";
      desc          = "AT90PWM2B";
      signature     = 0x1e 0x93 0x83;
+
+    ocdrev              = 1;
   ;
 
 #------------------------------------------------------------
@@ -8589,6 +8783,8 @@ part parent "pwm2"
 part parent "pwm2b"
      id            = "pwm3b";
      desc          = "AT90PWM3B";
+
+    ocdrev              = 1;
   ;
 
 #------------------------------------------------------------
@@ -8601,6 +8797,8 @@ part parent "pwm3b"
      id            = "pwm316";
      desc          = "AT90PWM316";
      signature     = 0x1e 0x94 0x83;
+
+    ocdrev              = 1;
 
     memory "flash"
         paged           = yes;
@@ -8700,6 +8898,8 @@ part
     chiperasetime       = 0;
     programfusepolltimeout = 25;
     programlockpolltimeout = 25;
+
+    ocdrev              = 1;
 
      memory "eeprom"
          size            = 128;
@@ -8881,6 +9081,8 @@ part
     programfusepolltimeout = 25;
     programlockpolltimeout = 25;
 
+    ocdrev              = 1;
+
      memory "eeprom"
          size            = 256;
          page_size       = 4;
@@ -9059,6 +9261,8 @@ part
     chiperasetime       = 0;
     programfusepolltimeout = 25;
     programlockpolltimeout = 25;
+
+    ocdrev              = 1;
 
      memory "eeprom"
          size            = 512;
@@ -9239,6 +9443,8 @@ part
     spmcr               = 0x57;
     rampz               = 0x3b;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -9428,6 +9634,8 @@ part
     rampz               = 0x3b;
     allowfullpagebitstream = no;
 
+    ocdrev              = 3;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 8;  /* for parallel programming */
@@ -9568,6 +9776,8 @@ part parent "m1280"
     id               = "m1281";
     desc             = "ATmega1281";
     signature        = 0x1e 0x97 0x04;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -9626,6 +9836,8 @@ part
     spmcr               = 0x57;
     rampz               = 0x3b;
     allowfullpagebitstream = no;
+
+    ocdrev              = 4;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -9771,6 +9983,8 @@ part parent "m2560"
     id               = "m2561";
     desc             = "ATmega2561";
     signature        = 0x1e 0x98 0x02;
+
+    ocdrev              = 4;
   ;
 
 #------------------------------------------------------------
@@ -9784,6 +9998,8 @@ part parent "m2561"
     signature        = 0x1e 0xa7 0x01;
     chip_erase_delay = 55000;
     bs2              = 0xE2;
+
+    ocdrev              = 3;
 
     memory "flash"
         paged           = yes;
@@ -9816,6 +10032,87 @@ part parent "m2561"
 
         writepage       = "  0   1   0   0      1   1   0   0",
                           "a15 a14 a13 a12    a11 a10  a9  a8",
+                          " a7   x   x   x      x   x   x   x",
+                          "  x   x   x   x      x   x   x   x";
+
+	mode		= 0x41;
+	delay		= 20;
+	blocksize	= 256;
+	readsize	= 256;
+      ;
+  ;
+
+#------------------------------------------------------------
+# ATmega256RFR2
+#------------------------------------------------------------
+
+part parent "m2561"
+    id               = "m256rfr2";
+    desc             = "ATmega256RFR2";
+    signature        = 0x1e 0xa8 0x02;
+    chip_erase_delay = 55000;
+    bs2              = 0xE2;
+
+
+    ocdrev              = 4;
+  ;
+
+#------------------------------------------------------------
+# ATmega128RFR2
+#------------------------------------------------------------
+
+part parent "m128rfa1"
+    id               = "m128rfr2";
+    desc             = "ATmega128RFR2";
+    signature        = 0x1e 0xa7 0x02;
+
+
+    ocdrev              = 3;
+  ;
+
+#------------------------------------------------------------
+# ATmega64RFR2
+#------------------------------------------------------------
+
+part parent "m128rfa1"
+    id               = "m64rfr2";
+    desc             = "ATmega64RFR2";
+    signature        = 0x1e 0xa6 0x02;
+
+
+    ocdrev              = 3;
+
+    memory "flash"
+        paged           = yes;
+        size            = 65536;
+        page_size       = 256;
+        num_pages       = 256;
+        min_write_delay = 50000;
+        max_write_delay = 50000;
+        readback_p1     = 0x00;
+        readback_p2     = 0x00;
+        read_lo         = "  0   0   1   0      0   0   0   0",
+                          "  0 a14 a13 a12    a11 a10  a9  a8",
+                          " a7  a6  a5  a4     a3  a2  a1  a0",
+                          "  o   o   o   o      o   o   o   o";
+
+        read_hi         = "  0   0   1   0      1   0   0   0",
+                          "  0 a14 a13 a12    a11 a10  a9  a8",
+                          " a7  a6  a5  a4     a3  a2  a1  a0",
+                          "  o   o   o   o      o   o   o   o";
+
+        loadpage_lo     = "  0   1   0   0      0   0   0   0",
+                          "  x   x   x   x      x   x   x   x",
+                          "  x  a6  a5  a4     a3  a2  a1  a0",
+                          "  i   i   i   i      i   i   i   i";
+
+        loadpage_hi     = "  0   1   0   0      1   0   0   0",
+                          "  x   x   x   x      x   x   x   x",
+                          "  x  a6  a5  a4     a3  a2  a1  a0",
+                          "  i   i   i   i      i   i   i   i";
+
+        writepage       = "  0   1   0   0      1   1   0   0",
+                          "  0 a14 a13 a12    a11 a10  a9  a8",
                           " a7   x   x   x      x   x   x   x",
                           "  x   x   x   x      x   x   x   x";
 
@@ -9883,6 +10180,8 @@ part
     chiperasetime       = 0;
     programfusepolltimeout = 25;
     programlockpolltimeout = 25;
+
+    ocdrev              = 1;
 
      memory "eeprom"
          size            = 128;
@@ -10066,6 +10365,8 @@ part
     programfusepolltimeout = 25;
     programlockpolltimeout = 25;
 
+    ocdrev              = 1;
+
      memory "eeprom"
          size            = 256;
         paged           = no;
@@ -10248,6 +10549,8 @@ part
     programfusepolltimeout = 25;
     programlockpolltimeout = 25;
 
+    ocdrev              = 1;
+
      memory "eeprom"
          size            = 512;
         paged           = no;
@@ -10429,6 +10732,8 @@ part
     spmcr               = 0x57;
     rampz               = 0x3b;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -10618,6 +10923,8 @@ part
     rampz               = 0x3b;
     allowfullpagebitstream = no;
 
+    ocdrev              = 3;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 8;  /* for parallel programming */
@@ -10758,6 +11065,8 @@ part parent "usb646"
     id               = "usb647";
     desc             = "AT90USB647";
     signature        = 0x1e 0x96 0x82;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -10816,6 +11125,8 @@ part
     spmcr               = 0x57;
     rampz               = 0x3b;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -10957,6 +11268,8 @@ part parent "usb1286"
     id               = "usb1287";
     desc             = "AT90USB1287";
     signature        = 0x1e 0x97 0x82;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -11007,6 +11320,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 1;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -11191,6 +11506,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 1;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -11378,6 +11695,8 @@ part
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
 
+    ocdrev              = 1;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 4;  /* for parallel programming */
@@ -11562,6 +11881,8 @@ part
     programfusepolltimeout = 5;
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
+
+    ocdrev              = 1;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -11748,6 +12069,8 @@ part
     programlockpulsewidth = 0;
     programlockpolltimeout = 5;
 
+    ocdrev              = 1;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 4;  /* for parallel programming */
@@ -11933,6 +12256,8 @@ part
     idr                 = 0x31;
     spmcr               = 0x57;
     allowfullpagebitstream = no;
+
+    ocdrev              = 3;
 
     memory "eeprom"
         paged           = no; /* leave this "no" */
@@ -12123,6 +12448,8 @@ part
     spmcr               = 0x57;
     allowfullpagebitstream = no;
 
+    ocdrev              = 3;
+
     memory "eeprom"
         paged           = no; /* leave this "no" */
         page_size       = 8;  /* for parallel programming */
@@ -12264,6 +12591,8 @@ part parent "m325"
     id               = "m3250";
     desc             = "ATmega3250";
     signature        = 0x1E 0x95 0x06;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -12274,6 +12603,8 @@ part parent "m645"
     id               = "m6450";
     desc             = "ATmega6450";
     signature        = 0x1E 0x96 0x06;
+
+    ocdrev              = 3;
   ;
 
 #------------------------------------------------------------
@@ -12286,29 +12617,25 @@ part
     has_jtag	= yes;
     has_pdi	= yes;
     nvm_base	= 0x01c0;
+    mcu_base	= 0x0090;
 
     memory "prodsig"
         size		= 0x200;
         offset		= 0x8e0200;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "usersig"
         size		= 0x200;
         offset		= 0x8e0400;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "signature"
         size		= 3;
         offset		= 0x1000090;
-    ;
-
-    memory "fuse0"
-        size		= 1;
-        offset		= 0x8f0020;
     ;
 
     memory "fuse1"
@@ -12335,6 +12662,34 @@ part
         size		= 1;
         offset		= 0x8f0027;
     ;
+
+    memory "data"
+        # SRAM, only used to supply the offset
+        offset		= 0x1000000;
+    ;
+;
+
+
+#------------------------------------------------------------
+# ATxmega??? common values, devices with page size of 256
+#------------------------------------------------------------
+
+part parent ".xmega"
+    id		= ".xmegasmall";
+    desc	= "ATxmega??? common values, devices with page size 256";
+    memory "prodsig"
+        size		= 0x100;
+        offset		= 0x8e0200;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "usersig"
+        size		= 0x100;
+        offset		= 0x8e0400;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
 ;
 
 
@@ -12342,7 +12697,7 @@ part
 # ATxmega64A1
 #------------------------------------------------------------
 
-part parent ".xmega"
+part parent ".xmegasmall"
     id		= "x64a1";
     desc	= "ATxmega64A1";
     signature	= 0x1e 0x96 0x4e;
@@ -12381,6 +12736,11 @@ part parent ".xmega"
         page_size	= 0x100;
         readsize	= 0x100;
     ;
+
+    memory "fuse0"
+        size		= 1;
+        offset		= 0x8f0020;
+    ;
 ;
 
 #------------------------------------------------------------
@@ -12402,29 +12762,34 @@ part parent ".xmega"
     memory "application"
         size		= 0x00020000;
         offset		= 0x0800000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "apptable"
         size		= 0x00002000;
         offset		= 0x0081e000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "boot"
         size		= 0x00002000;
         offset		= 0x00820000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "flash"
         size		= 0x00022000;
         offset		= 0x0800000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
+    ;
+
+    memory "fuse0"
+        size		= 1;
+        offset		= 0x8f0020;
     ;
 ;
 
@@ -12457,29 +12822,34 @@ part parent ".xmega"
     memory "application"
         size		= 0x00030000;
         offset		= 0x0800000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "apptable"
         size		= 0x00002000;
         offset		= 0x0082e000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "boot"
         size		= 0x00002000;
         offset		= 0x00830000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "flash"
         size		= 0x00032000;
         offset		= 0x0800000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
+    ;
+
+    memory "fuse0"
+        size		= 1;
+        offset		= 0x8f0020;
     ;
 ;
 
@@ -12502,29 +12872,34 @@ part parent ".xmega"
     memory "application"
         size		= 0x00040000;
         offset		= 0x0800000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "apptable"
         size		= 0x00002000;
         offset		= 0x0083e000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "boot"
         size		= 0x00002000;
         offset		= 0x00840000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
     ;
 
     memory "flash"
         size		= 0x00042000;
         offset		= 0x0800000;
-        page_size	= 0x100;
+        page_size	= 0x200;
         readsize	= 0x100;
+    ;
+
+    memory "fuse0"
+        size		= 1;
+        offset		= 0x8f0020;
     ;
 ;
 
@@ -12582,10 +12957,135 @@ part parent "x256a3"
 # ATxmega16A4
 #------------------------------------------------------------
 
-part parent ".xmega"
+part parent ".xmegasmall"
     id		= "x16a4";
     desc	= "ATxmega16A4";
     signature	= 0x1e 0x94 0x41;
+    has_jtag	= no;
+
+    memory "eeprom"
+        size		= 0x0400;
+        offset		= 0x08c0000;
+        page_size	= 0x20;
+        readsize	= 0x100;
+    ;
+
+    memory "application"
+        size		= 0x00004000;
+        offset		= 0x0800000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "apptable"
+        size		= 0x00001000;
+        offset		= 0x00803000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "boot"
+        size		= 0x00001000;
+        offset		= 0x00804000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "flash"
+        size		= 0x00005000;
+        offset		= 0x0800000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "fuse0"
+        size		= 1;
+        offset		= 0x8f0020;
+    ;
+;
+
+#------------------------------------------------------------
+# ATxmega32A4
+#------------------------------------------------------------
+
+part parent ".xmegasmall"
+    id		= "x32a4";
+    desc	= "ATxmega32A4";
+    signature	= 0x1e 0x95 0x41;
+    has_jtag	= no;
+
+    memory "eeprom"
+        size		= 0x0400;
+        offset		= 0x08c0000;
+        page_size	= 0x20;
+        readsize	= 0x100;
+    ;
+
+    memory "application"
+        size		= 0x00008000;
+        offset		= 0x0800000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "apptable"
+        size		= 0x00001000;
+        offset		= 0x00807000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "boot"
+        size		= 0x00001000;
+        offset		= 0x00808000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "flash"
+        size		= 0x00009000;
+        offset		= 0x0800000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "fuse0"
+        size		= 1;
+        offset		= 0x8f0020;
+    ;
+;
+
+#------------------------------------------------------------
+# ATxmega64A4
+#------------------------------------------------------------
+
+part parent "x64a3"
+    id		= "x64a4";
+    desc	= "ATxmega64A4";
+    signature	= 0x1e 0x96 0x46;
+    has_jtag	= no;
+;
+
+#------------------------------------------------------------
+# ATxmega128A4
+#------------------------------------------------------------
+
+part parent "x128a3"
+    id		= "x128a4";
+    desc	= "ATxmega128A4";
+    signature	= 0x1e 0x97 0x46;
+    has_jtag	= no;
+;
+
+#------------------------------------------------------------
+# ATxmega16D4
+#------------------------------------------------------------
+
+part parent ".xmegasmall"
+    id		= "x16d4";
+    desc	= "ATxmega16D4";
+    signature	= 0x1e 0x94 0x42;
+    has_jtag	= no;
 
     memory "eeprom"
         size		= 0x0400;
@@ -12623,14 +13123,16 @@ part parent ".xmega"
     ;
 ;
 
+
 #------------------------------------------------------------
-# ATxmega32A4
+# ATxmega32D4
 #------------------------------------------------------------
 
-part parent ".xmega"
-    id		= "x32a4";
-    desc	= "ATxmega32A4";
-    signature	= 0x1e 0x95 0x41;
+part parent ".xmegasmall"
+    id		= "x32d4";
+    desc	= "ATxmega32D4";
+    signature	= 0x1e 0x95 0x42;
+    has_jtag	= no;
 
     memory "eeprom"
         size		= 0x0400;
@@ -12668,24 +13170,101 @@ part parent ".xmega"
     ;
 ;
 
+
 #------------------------------------------------------------
-# ATxmega64A4
+# ATxmega64D4
 #------------------------------------------------------------
 
-part parent "x64a3"
-    id		= "x64a4";
-    desc	= "ATxmega64A4";
-    signature	= 0x1e 0x96 0x46;
+part parent ".xmegasmall"
+    id		= "x64d4";
+    desc	= "ATxmega64D4";
+    signature	= 0x1e 0x96 0x47;
+    has_jtag	= no;
+
+    memory "eeprom"
+        size		= 0x0400;
+        offset		= 0x08c0000;
+        page_size	= 0x20;
+        readsize	= 0x100;
+    ;
+
+    memory "application"
+        size		= 0x00010000;
+        offset		= 0x0800000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "apptable"
+        size		= 0x00001000;
+        offset		= 0x0080f000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "boot"
+        size		= 0x00001000;
+        offset		= 0x00810000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "flash"
+        size		= 0x00011000;
+        offset		= 0x0800000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
 ;
 
+
 #------------------------------------------------------------
-# ATxmega128A4
+# ATxmega128D4
 #------------------------------------------------------------
 
-part parent "x128a3"
-    id		= "x128a4";
-    desc	= "ATxmega128A4";
-    signature	= 0x1e 0x97 0x46;
+part parent ".xmegasmall"
+    id		= "x128d4";
+    desc	= "ATxmega128D4";
+    signature	= 0x1e 0x97 0x47;
+    has_jtag	= no;
+
+    memory "eeprom"
+        size		= 0x0800;
+        offset		= 0x08c0000;
+        page_size	= 0x20;
+        readsize	= 0x100;
+    ;
+
+    memory "application"
+        size		= 0x00020000;
+        offset		= 0x0800000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "apptable"
+        # the datasheet has conflicting data: it claims an apptable section
+        # of 4 KiB, but at (word) addresses 0xF000 through 0xFFFF.  As the
+        # XML file also says it's 8 KiB, use this.
+        size		= 0x00002000;
+        offset		= 0x0081e000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "boot"
+        size		= 0x00002000;
+        offset		= 0x00820000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
+
+    memory "flash"
+        size		= 0x00022000;
+        offset		= 0x0800000;
+        page_size	= 0x100;
+        readsize	= 0x100;
+    ;
 ;
 
 

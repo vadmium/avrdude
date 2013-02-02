@@ -15,8 +15,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -183,6 +182,27 @@ int avr_get_output(OPCODE * op, unsigned char * res, unsigned char * data)
   }
 
   return 0;
+}
+
+
+/*
+ * avr_get_output_index()
+ *
+ * Calculate the byte number of the output data based on the
+ * opcode data.
+ */
+int avr_get_output_index(OPCODE * op)
+{
+  int i, j;
+
+  for (i=0; i<32; i++) {
+    if (op->bit[i].type == AVR_CMDBIT_OUTPUT) {
+      j = 3 - i / 8;
+      return j;
+    }
+  }
+
+  return -1;
 }
 
 
@@ -440,6 +460,7 @@ AVRPART * avr_new_part(void)
   p->lineno = 0;
   memset(p->signature, 0xFF, 3);
   p->ctl_stack_type = CTL_STACK_NONE;
+  p->ocdrev = -1;
 
   p->mem = lcreat(NULL, 0);
 
@@ -574,13 +595,19 @@ static char * reset_disp_str(int r)
 }
 
 
-static char * pin_name(int pinno)
+const char * avr_pin_name(int pinno)
 {
   switch (pinno) {
+    case PPI_AVR_VCC   : return "VCC";
+    case PPI_AVR_BUFF  : return "BUFF";
     case PIN_AVR_RESET : return "RESET";
-    case PIN_AVR_MISO  : return "MISO";
-    case PIN_AVR_MOSI  : return "MOSI";
     case PIN_AVR_SCK   : return "SCK";
+    case PIN_AVR_MOSI  : return "MOSI";
+    case PIN_AVR_MISO  : return "MISO";
+    case PIN_LED_ERR   : return "ERRLED";
+    case PIN_LED_RDY   : return "RDYLED";
+    case PIN_LED_PGM   : return "PGMLED";
+    case PIN_LED_VFY   : return "VFYLED";
     default : return "<unknown>";
   }
 }
@@ -616,7 +643,7 @@ void avr_display(FILE * f, AVRPART * p, const char * prefix, int verbose)
           prefix, p->pagel,
           prefix, p->bs2,
           prefix, reset_disp_str(p->reset_disposition),
-          prefix, pin_name(p->retry_pulse),
+          prefix, avr_pin_name(p->retry_pulse),
           prefix, (p->flags & AVRPART_SERIALOK) ? "yes" : "no",
           prefix, (p->flags & AVRPART_PARALLELOK) ?
             ((p->flags & AVRPART_PSEUDOPARALLEL) ? "psuedo" : "yes") : "no",

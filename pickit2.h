@@ -1,6 +1,6 @@
 /*
  * avrdude - A Downloader/Uploader for AVR device programmers
- * Copyright (C) 2005 Joerg Wunsch
+ * Copyright (C) 2006  Thomas Fischl
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,24 +16,22 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* $Id$ */
+/* $Id: pickit2.h 2010-05-03 dbrown $ */
 
-#ifndef freebsd_ppi_h
-#define freebsd_ppi_h
+#ifndef pickit2_h
+#define pickit2_h
 
-#include <dev/ppbus/ppi.h>
+#include "avrpart.h"
 
-#define ppi_claim(fd) {}
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define ppi_release(fd) {}
+extern const char pickit2_desc[];
+void pickit2_initpgm (PROGRAMMER * pgm);
 
-#define DO_PPI_READ(fd, reg, valp) \
-	(void)ioctl(fd, \
-		(reg) == PPIDATA? PPIGDATA: ((reg) == PPICTRL? PPIGCTRL: PPIGSTATUS), \
-		    valp)
-#define DO_PPI_WRITE(fd, reg, valp) \
-	(void)ioctl(fd, \
-		(reg) == PPIDATA? PPISDATA: ((reg) == PPICTRL? PPISCTRL: PPISSTATUS), \
-		    valp)
+#ifdef __cplusplus
+}
+#endif
 
-#endif /* freebsd_ppi_h */
+#endif // pickit2_h

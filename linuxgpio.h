@@ -1,6 +1,6 @@
 /*
  * avrdude - A Downloader/Uploader for AVR device programmers
- * Copyright (C) 2005 Joerg Wunsch
+ * Copyright (C) 2013 Radoslav Kolev <radoslav@kolev.info>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,27 +13,24 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-/* $Id$ */
+/* $Id: par.h 722 2007-01-24 22:43:46Z joerg_wunsch $ */
 
-#ifndef freebsd_ppi_h
-#define freebsd_ppi_h
+#ifndef linuxgpio_h
+#define linuxgpio_h
 
-#include <dev/ppbus/ppi.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-#define ppi_claim(fd) {}
+extern const char linuxgpio_desc[];
+void linuxgpio_initpgm        (PROGRAMMER * pgm);
 
-#define ppi_release(fd) {}
+#ifdef __cplusplus
+}
+#endif
 
-#define DO_PPI_READ(fd, reg, valp) \
-	(void)ioctl(fd, \
-		(reg) == PPIDATA? PPIGDATA: ((reg) == PPICTRL? PPIGCTRL: PPIGSTATUS), \
-		    valp)
-#define DO_PPI_WRITE(fd, reg, valp) \
-	(void)ioctl(fd, \
-		(reg) == PPIDATA? PPISDATA: ((reg) == PPICTRL? PPISCTRL: PPISSTATUS), \
-		    valp)
-
-#endif /* freebsd_ppi_h */
+#endif

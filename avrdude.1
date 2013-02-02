@@ -13,13 +13,12 @@
 .\" GNU General Public License for more details.
 .\"
 .\" You should have received a copy of the GNU General Public License
-.\" along with this program; if not, write to the Free Software
-.\" Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+.\" along with this program. If not, see <http://www.gnu.org/licenses/>.
 .\"
 .\"
 .\" $Id$
 .\"
-.Dd DATE February 2, 2012
+.Dd DATE December 3, 2012
 .Os
 .Dt AVRDUDE 1
 .Sh NAME
@@ -60,7 +59,7 @@ microcontrollers.
 supports Atmel's STK500 programmer,
 Atmel's AVRISP and AVRISP mkII devices,
 Atmel's STK600,
-Atmel's JTAG ICE (both mkI and mkII, the latter also in ISP mode),
+Atmel's JTAG ICE (mkI, mkII and 3, the latter two also in ISP mode),
 programmers complying to AppNote AVR910 and AVR109 (including the Butterfly),
 as well as a simple hard-wired
 programmer connected directly to a
@@ -99,6 +98,18 @@ port.
 Connecting to a serial port emulated on top of USB is likely to not
 work at all, or to work abysmally slow.
 .Pp
+If you happen to have a Linux system with at least 4 hardware GPIOs 
+available (like almost all embedded Linux boards) you can do without 
+any additional hardware - just connect them to the MOSI, MISO, RESET 
+and SCK pins on the AVR and use the linuxgpio programmer type. It bitbangs
+the lines using the Linux sysfs GPIO interface. Of course, care should
+be taken about voltage level compatibility. Also, although not strictrly 
+required, it is strongly advisable to protect the GPIO pins from 
+overcurrent situations in some way. The simplest would be to just put
+some resistors in series or better yet use a 3-state buffer driver like
+the 74HC244. Have a look at http://kolev.info/avrdude-linuxgpio for a more
+detailed tutorial about using this programmer type.
+.Pp
 Atmel's STK500 programmer is also supported and connects to a serial
 port.
 Both, firmware versions 1.x and 2.x can be handled, but require a
@@ -130,13 +141,15 @@ AVR910, and the bootloader described in Atmel's application note
 AVR109 (which is also used by the AVR Butterfly evaluation board), are
 supported on a serial port.
 .Pp
-Atmel's JTAG ICE (both mkI and mkII) is supported as well to up- or download memory
+Atmel's JTAG ICE (mkI, mkII, and 3) is supported as well to up- or download memory
 areas from/to an AVR target (no support for on-chip debugging).
 For the JTAG ICE mkII, JTAG, debugWire and ISP mode are supported, provided
 it has a firmware revision of at least 4.14 (decimal).
+JTAGICE3 also supports all of JTAG, debugWIRE, and ISP mode.
 See below for the limitations of debugWire.
 For ATxmega devices, the JTAG ICE mkII is supported in PDI mode, provided it
 has a revision 1 hardware and firmware version of at least 5.37 (decimal).
+For ATxmega devices, the JTAGICE3 is supported in PDI mode.
 .Pp
 The AVR Dragon is supported in all modes (ISP, JTAG, HVSP, PP, debugWire).
 When used in JTAG and debugWire mode, the AVR Dragon behaves similar to a
@@ -433,7 +446,7 @@ language notation (i. e., hexadecimal values are prefixed by
 .Ql 0x
 ).
 .Pp
-For the JTAG ICE mkII, if
+For the JTAG ICE mkII and JTAGICE3, if
 .Nm
 has been configured with libusb support,
 .Ar port
@@ -441,7 +454,7 @@ can alternatively be specified as
 .Pa usb Ns Op \&: Ns Ar serialno .
 This will cause
 .Nm
-to search a JTAG ICE mkII on USB.
+to search the programmer on USB.
 If
 .Ar serialno
 is also specified, it will be matched against the serial number read
@@ -771,7 +784,7 @@ microseconds.
 Note that unlike STK500 settings, this setting will be reverted to
 its default value (approximately 1 microsecond) when the programming
 software signs off from the JTAG ICE.
-This parameter can also be used on the JTAG ICE mkII to specify the
+This parameter can also be used on the JTAG ICE mkII and JTAGICE3 to specify the
 ISP clock period when operating the ICE in ISP mode.
 .It Ar parms
 .Em STK500 and STK600 programmer only:
@@ -830,8 +843,9 @@ entered.
 .Ss Programmers accepting extended parameters
 .Bl -tag -offset indent -width indent
 .It Ar JTAG ICE mkII
+.It Ar JTAGICE3
 .It Ar AVR Dragon
-When using the JTAG ICE mkII or AVR Dragon in JTAG mode, the
+When using the JTAG ICE mkII, JTAGICE3 or AVR Dragon in JTAG mode, the
 following extended parameter is accepted:
 .Bl -tag -offset indent -width indent
 .It Ar jtagchain=UB,UA,BB,BA
@@ -893,7 +907,7 @@ good candidates with the latches driven by the appropriate reset pin (cs,
 aux or aux2). Otherwise the SPI traffic in one active circuit may interfere
 with programming the AVR in the other design.
 .It Ar spifreq=<0..7>
-BusPirate to AVR SPI speed:
+The SPI speed for the Bus Pirate's binary SPI mode:
 .Bd -literal
 0 ..  30 kHz   (default)
 1 .. 125 kHz
@@ -904,14 +918,26 @@ BusPirate to AVR SPI speed:
 6 ..   4 MHz
 7 ..   8 MHz
 .Ed
+.It Ar rawfreq=<0..3>
+Sets the SPI speed and uses the Bus Pirate's binary "raw-wire" mode:
+.Bd -literal
+0 ..   5 kHz
+1 ..  50 kHz
+2 .. 100 kHz   (Firmware v4.2+ only)
+3 .. 400 kHz   (v4.2+)
+.Ed
+.Pp
+The only advantage of the "raw-wire" mode is the different SPI frequencies
+available. Paged writing is not implemented in this mode.
 .It Ar ascii
-Attempt to ASCII mode even when the firmware supports BinMode (binary mode). 
+Attempt to use ASCII mode even when the firmware supports BinMode (binary
+mode). 
 BinMode is supported in firmware 2.7 and newer, older FW's either don't
 have BinMode or their BinMode is buggy. ASCII mode is slower and makes 
 the above
-.Ar reset=
+.Ar reset= , spifreq=
 and 
-.Ar spifreq=
+.Ar rawfreq=
 parameters unavailable. Be aware that ASCII mode is not guaranteed to work
 with newer firmware versions, and is retained only to maintain compatability
 with older firmware versions.
@@ -919,6 +945,11 @@ with older firmware versions.
 Firmware versions 5.10 and newer support a binary mode SPI command that enables
 whole pages to be written to AVR flash memory at once, resulting in a
 significant write speed increase. If use of this mode is not desirable for some
+reason, this option disables it.
+.It Ar nopagedread
+Newer firmware versions support in binary mode SPI command some AVR Extended 
+Commands. Using the "Bulk Memory Read from Flash" results in a
+significant read speed increase. If use of this mode is not desirable for some
 reason, this option disables it.
 .It Ar cpufreq=<125..4000>
 This sets the AUX pin to output a frequency of 
@@ -947,6 +978,25 @@ milliseconds before continuing to the protocol sync phase.
 No toggling of DTR/RTS is performed if
 .Ar snooze
 is greater than 0.
+.El
+.It Ar PICkit2
+Connection to the PICkit2 programmer:
+.Bd -literal
+(AVR)    (PICkit2)
+RST  -   VPP/MCLR (1) 
+VDD  -   VDD Target (2) -- possibly optional if AVR self powered 
+GND  -   GND (3) 
+MISO -   PGD (4) 
+SCLK -   PDC (5) 
+MOSI -   AUX (6) 
+
+.Ed
+Extended commandline parameters:
+.Bl -tag -offset indent -width indent
+.It Ar clockrate=<rate>
+Sets the SPI clocking rate in Hz (default is 100kHz). Alternately the -B or -i options can be used to set the period.
+.It Ar timeout=<usb-transaction-timeout>
+Sets the timeout for USB reads and writes in milliseconds (default is 1500 ms).
 .El
 .El
 .Sh FILES

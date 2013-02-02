@@ -16,8 +16,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -68,6 +67,10 @@
 #define JTAGMKII_PRIVATE_EXPORTED
 #include "jtagmkII_private.h"
 
+#include "jtag3.h"           // public interfaces from jtagmkII.c
+#define JTAG3_PRIVATE_EXPORTED
+#include "jtag3_private.h"
+
 #define STK500V2_XTAL 7372800U
 
 // Timeout (in seconds) for waiting for serial response
@@ -114,6 +117,7 @@ static const char *pgmname[] =
   "AVRISP mkII",
   "JTAG ICE mkII",
   "STK600",
+  "JTAGICE3",
 };
 
 struct jtagispentry
@@ -268,6 +272,12 @@ static int stk500v2_getparm2(PROGRAMMER * pgm, unsigned char parm, unsigned int 
 static int stk500v2_setparm2(PROGRAMMER * pgm, unsigned char parm, unsigned int value);
 static int stk500v2_setparm_real(PROGRAMMER * pgm, unsigned char parm, unsigned char value);
 static void stk500v2_print_parms1(PROGRAMMER * pgm, const char * p);
+static int stk500v2_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
+                               unsigned int page_size,
+                               unsigned int addr, unsigned int n_bytes);
+static int stk500v2_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
+                                unsigned int page_size,
+                                unsigned int addr, unsigned int n_bytes);
 
 static unsigned int stk500v2_mode_for_pagesize(unsigned int pagesize);
 
@@ -289,6 +299,7 @@ void stk500v2_setup(PROGRAMMER * pgm)
   }
   memset(pgm->cookie, 0, sizeof(struct pdata));
   PDATA(pgm)->command_sequence = 1;
+  PDATA(pgm)->boot_start = ULONG_MAX;
 }
 
 static void stk500v2_jtagmkII_setup(PROGRAMMER * pgm)
@@ -315,6 +326,30 @@ static void stk500v2_jtagmkII_setup(PROGRAMMER * pgm)
   PDATA(pgm)->chained_pdata = theircookie;
 }
 
+static void stk500v2_jtag3_setup(PROGRAMMER * pgm)
+{
+  void *mycookie, *theircookie;
+
+  if ((pgm->cookie = malloc(sizeof(struct pdata))) == 0) {
+    fprintf(stderr,
+	    "%s: stk500v2_setup(): Out of memory allocating private data\n",
+	    progname);
+    exit(1);
+  }
+  memset(pgm->cookie, 0, sizeof(struct pdata));
+  PDATA(pgm)->command_sequence = 1;
+
+  /*
+   * Now, have the JTAGICE3 backend allocate its own private
+   * data.  Store our own cookie in a safe place for the time being.
+   */
+  mycookie = pgm->cookie;
+  jtag3_setup(pgm);
+  theircookie = pgm->cookie;
+  pgm->cookie = mycookie;
+  PDATA(pgm)->chained_pdata = theircookie;
+}
+
 void stk500v2_teardown(PROGRAMMER * pgm)
 {
   free(pgm->cookie);
@@ -327,6 +362,17 @@ static void stk500v2_jtagmkII_teardown(PROGRAMMER * pgm)
   mycookie = pgm->cookie;
   pgm->cookie = PDATA(pgm)->chained_pdata;
   jtagmkII_teardown(pgm);
+
+  free(mycookie);
+}
+
+static void stk500v2_jtag3_teardown(PROGRAMMER * pgm)
+{
+  void *mycookie;
+
+  mycookie = pgm->cookie;
+  pgm->cookie = PDATA(pgm)->chained_pdata;
+  jtag3_teardown(pgm);
 
   free(mycookie);
 }
@@ -415,6 +461,31 @@ static int stk500v2_jtagmkII_send(PROGRAMMER * pgm, unsigned char * data, size_t
   return rv;
 }
 
+/*
+ * Send the data as a JTAGICE3 encapsulated ISP packet.
+ */
+static int stk500v2_jtag3_send(PROGRAMMER * pgm, unsigned char * data, size_t len)
+{
+  unsigned char *cmdbuf;
+  int rv;
+  void *mycookie;
+
+  if ((cmdbuf = malloc(len + 1)) == NULL) {
+    fprintf(stderr, "%s: out of memory for command packet\n",
+            progname);
+    exit(1);
+  }
+  mycookie = pgm->cookie;
+  pgm->cookie = PDATA(pgm)->chained_pdata;
+  cmdbuf[0] = SCOPE_AVR_ISP;
+  memcpy(cmdbuf + 1, data, len);
+  rv = jtag3_send(pgm, cmdbuf, len + 1);
+  free(cmdbuf);
+  pgm->cookie = mycookie;
+
+  return rv;
+}
+
 static int stk500v2_send(PROGRAMMER * pgm, unsigned char * data, size_t len)
 {
   unsigned char buf[275 + 6];		// max MESSAGE_BODY of 275 bytes, 6 bytes overhead
@@ -425,6 +496,8 @@ static int stk500v2_send(PROGRAMMER * pgm, unsigned char * data, size_t len)
     return stk500v2_send_mk2(pgm, data, len);
   else if (PDATA(pgm)->pgmtype == PGMTYPE_JTAGICE_MKII)
     return stk500v2_jtagmkII_send(pgm, data, len);
+  else if (PDATA(pgm)->pgmtype == PGMTYPE_JTAGICE3)
+    return stk500v2_jtag3_send(pgm, data, len);
 
   buf[0] = MESSAGE_START;
   buf[1] = PDATA(pgm)->command_sequence;
@@ -512,6 +585,40 @@ static int stk500v2_jtagmkII_recv(PROGRAMMER * pgm, unsigned char msg[],
   return rv;
 }
 
+static int stk500v2_jtag3_recv(PROGRAMMER * pgm, unsigned char msg[],
+			       size_t maxsize)
+{
+  int rv;
+  unsigned char *jtagmsg;
+  void *mycookie;
+
+  mycookie = pgm->cookie;
+  pgm->cookie = PDATA(pgm)->chained_pdata;
+  rv = jtag3_recv(pgm, &jtagmsg);
+  pgm->cookie = mycookie;
+  if (rv <= 0) {
+    fprintf(stderr, "%s: stk500v2_jtag3_recv(): error in jtagmkII_recv()\n",
+            progname);
+    return -1;
+  }
+  if (rv - 1 > maxsize) {
+    fprintf(stderr,
+            "%s: stk500v2_jtag3_recv(): got %u bytes, have only room for %u bytes\n",
+            progname, (unsigned)rv - 1, (unsigned)maxsize);
+    rv = maxsize;
+  }
+  if (jtagmsg[0] != SCOPE_AVR_ISP) {
+    fprintf(stderr,
+	    "%s: stk500v2_jtag3_recv(): message is not AVR ISP: 0x%02x\n",
+	    progname, jtagmsg[0]);
+    free(jtagmsg);
+    return -1;
+  }
+  memcpy(msg, jtagmsg + 1, rv - 1);
+  free(jtagmsg);
+  return rv;
+}
+
 static int stk500v2_recv(PROGRAMMER * pgm, unsigned char msg[], size_t maxsize) {
   enum states { sINIT, sSTART, sSEQNUM, sSIZE1, sSIZE2, sTOKEN, sDATA, sCSUM, sDONE }  state = sSTART;
   unsigned int msglen = 0;
@@ -528,6 +635,8 @@ static int stk500v2_recv(PROGRAMMER * pgm, unsigned char msg[], size_t maxsize) 
     return stk500v2_recv_mk2(pgm, msg, maxsize);
   else if (PDATA(pgm)->pgmtype == PGMTYPE_JTAGICE_MKII)
     return stk500v2_jtagmkII_recv(pgm, msg, maxsize);
+  else if (PDATA(pgm)->pgmtype == PGMTYPE_JTAGICE3)
+    return stk500v2_jtag3_recv(pgm, msg, maxsize);
 
   DEBUG("STK500V2: stk500v2_recv(): ");
 
@@ -632,7 +741,8 @@ int stk500v2_getsync(PROGRAMMER * pgm) {
 
   DEBUG("STK500V2: stk500v2_getsync()\n");
 
-  if (PDATA(pgm)->pgmtype == PGMTYPE_JTAGICE_MKII)
+  if (PDATA(pgm)->pgmtype == PGMTYPE_JTAGICE_MKII ||
+      PDATA(pgm)->pgmtype == PGMTYPE_JTAGICE3)
     return 0;
 
 retry:
@@ -796,6 +906,10 @@ retry:
             fprintf(stderr,
                     "%s: stk500v2_command(): command failed\n",
                     progname);
+        } else if (buf[1] == STATUS_CMD_UNKNOWN) {
+            fprintf(stderr,
+                    "%s: stk500v2_command(): unknown command\n",
+                    progname);
         } else {
             fprintf(stderr, "%s: stk500v2_command(): unknown status 0x%02x\n",
                     progname, buf[1]);
@@ -853,6 +967,17 @@ static int stk500v2_cmd(PROGRAMMER * pgm, unsigned char cmd[4],
   res[3] = buf[5];
 
   return 0;
+}
+
+
+static int stk500v2_jtag3_cmd(PROGRAMMER * pgm, unsigned char cmd[4],
+			      unsigned char res[4])
+{
+  fprintf(stderr,
+	  "%s: stk500v2_jtag3_cmd(): Not available in JTAGICE3\n",
+	  progname);
+
+  return -1;
 }
 
 
@@ -1025,6 +1150,52 @@ static int stk500v2_program_enable(PROGRAMMER * pgm, AVRPART * p)
         }
         break;
 
+    case PGMTYPE_JTAGICE3:
+        if (buf[1] == STATUS_CMD_FAILED &&
+            (p->flags & AVRPART_HAS_DW) != 0) {
+            void *mycookie;
+            unsigned char cmd[4], *resp;
+
+            /* Try debugWIRE, and MONCON_DISABLE */
+            if (verbose >= 2)
+                fprintf(stderr,
+                        "%s: No response in ISP mode, trying debugWIRE\n",
+                        progname);
+
+            mycookie = pgm->cookie;
+            pgm->cookie = PDATA(pgm)->chained_pdata;
+
+            cmd[0] = PARM3_CONN_DW;
+            if (jtag3_setparm(pgm, SCOPE_AVR, 1, PARM3_CONNECTION, cmd, 1) < 0) {
+                pgm->cookie = mycookie;
+                break;
+            }
+
+            cmd[0] = SCOPE_AVR;
+
+            cmd[1] = CMD3_SIGN_ON;
+            cmd[2] = cmd[3] = 0;
+            if (jtag3_command(pgm, cmd, 4, &resp, "AVR sign-on") >= 0) {
+                free(resp);
+
+                cmd[1] = CMD3_START_DW_DEBUG;
+                if (jtag3_command(pgm, cmd, 4, &resp, "start DW debug") >= 0) {
+                    free(resp);
+
+                    cmd[1] = CMD3_MONCON_DISABLE;
+                    if (jtag3_command(pgm, cmd, 3, &resp, "MonCon disable") >= 0)
+                        free(resp);
+
+                    fprintf(stderr,
+                            "%s: Target prepared for ISP, signed off.\n"
+                            "%s: Please restart %s without power-cycling the target.\n",
+                            progname, progname, progname);
+                }
+            }
+            pgm->cookie = mycookie;
+        }
+        break;
+
     default:
         /* cannot report anything for other pgmtypes */
         break;
@@ -1080,7 +1251,6 @@ static int stk500hvsp_program_enable(PROGRAMMER * pgm, AVRPART * p)
 }
 
 
-
 /*
  * initialize the AVR device and prepare it to accept commands
  */
@@ -1095,6 +1265,21 @@ static int stk500v2_initialize(PROGRAMMER * pgm, AVRPART * p)
      * This is an ATxmega device, must use XPROG protocol for the
      * remaining actions.
      */
+    if ((p->flags & AVRPART_HAS_PDI) != 0) {
+      /*
+       * Find out where the border between application and boot area
+       * is.
+       */
+      AVRMEM *bootmem = avr_locate_mem(p, "boot");
+      AVRMEM *flashmem = avr_locate_mem(p, "flash");
+      if (bootmem == NULL || flashmem == NULL) {
+        fprintf(stderr,
+                "%s: stk500v2_initialize(): Cannot locate \"flash\" and \"boot\" memories in description\n",
+                progname);
+      } else {
+        PDATA(pgm)->boot_start = bootmem->offset - flashmem->offset;
+      }
+    }
     stk600_setup_xprog(pgm);
   } else {
     stk600_setup_isp(pgm);
@@ -1107,6 +1292,97 @@ static int stk500v2_initialize(PROGRAMMER * pgm, AVRPART * p)
     pgm->disable(pgm);
     usleep(10000);
   }
+
+  return pgm->program_enable(pgm, p);
+}
+
+
+
+/*
+ * initialize the AVR device and prepare it to accept commands
+ */
+static int stk500v2_jtag3_initialize(PROGRAMMER * pgm, AVRPART * p)
+{
+  unsigned char parm[4], *resp;
+  LNODEID ln;
+  AVRMEM * m;
+  void *mycookie;
+
+  if ((p->flags & AVRPART_HAS_PDI) ||
+      (p->flags & AVRPART_HAS_TPI)) {
+    fprintf(stderr, "%s: jtag3_initialize(): part %s has no ISP interface\n",
+	    progname, p->desc);
+    return -1;
+  }
+
+  mycookie = pgm->cookie;
+  pgm->cookie = PDATA(pgm)->chained_pdata;
+
+  if (p->flags & AVRPART_HAS_DW)
+    parm[0] = PARM3_ARCH_TINY;
+  else
+    parm[0] = PARM3_ARCH_MEGA;
+  if (jtag3_setparm(pgm, SCOPE_AVR, 0, PARM3_ARCH, parm, 1) < 0) {
+    pgm->cookie = mycookie;
+    return -1;
+  }
+
+  parm[0] = PARM3_SESS_PROGRAMMING;
+  if (jtag3_setparm(pgm, SCOPE_AVR, 0, PARM3_SESS_PURPOSE, parm, 1) < 0) {
+    pgm->cookie = mycookie;
+    return -1;
+  }
+
+  parm[0] = PARM3_CONN_ISP;
+  if (jtag3_setparm(pgm, SCOPE_AVR, 1, PARM3_CONNECTION, parm, 1) < 0) {
+    pgm->cookie = mycookie;
+    return -1;
+  }
+
+  parm[0] = SCOPE_AVR_ISP;
+  parm[1] = 0x1e;
+  jtag3_send(pgm, parm, 2);
+
+  if (jtag3_recv(pgm, &resp) > 0)
+    free(resp);
+
+  pgm->cookie = mycookie;
+
+  /*
+   * Examine the avrpart's memory definitions, and initialize the page
+   * caches.  For devices/memory that are not page oriented, treat
+   * them as page size 1 for EEPROM, and 2 for flash.
+   */
+  PDATA(pgm)->flash_pagesize = 2;
+  PDATA(pgm)->eeprom_pagesize = 1;
+  for (ln = lfirst(p->mem); ln; ln = lnext(ln)) {
+    m = ldata(ln);
+    if (strcmp(m->desc, "flash") == 0) {
+      if (m->page_size > 0) {
+        if (m->page_size > 256)
+          PDATA(pgm)->flash_pagesize = 256;
+        else
+          PDATA(pgm)->flash_pagesize = m->page_size;
+      }
+    } else if (strcmp(m->desc, "eeprom") == 0) {
+      if (m->page_size > 0)
+	PDATA(pgm)->eeprom_pagesize = m->page_size;
+    }
+  }
+  free(PDATA(pgm)->flash_pagecache);
+  free(PDATA(pgm)->eeprom_pagecache);
+  if ((PDATA(pgm)->flash_pagecache = malloc(PDATA(pgm)->flash_pagesize)) == NULL) {
+    fprintf(stderr, "%s: stk500hv_initialize(): Out of memory\n",
+	    progname);
+    return -1;
+  }
+  if ((PDATA(pgm)->eeprom_pagecache = malloc(PDATA(pgm)->eeprom_pagesize)) == NULL) {
+    fprintf(stderr, "%s: stk500hv_initialize(): Out of memory\n",
+	    progname);
+    free(PDATA(pgm)->flash_pagecache);
+    return -1;
+  }
+  PDATA(pgm)->flash_pageaddr = PDATA(pgm)->eeprom_pageaddr = (unsigned long)-1L;
 
   return pgm->program_enable(pgm, p);
 }
@@ -1139,7 +1415,7 @@ static int stk500hv_initialize(PROGRAMMER * pgm, AVRPART * p, enum hvmode mode)
 
   if (result < 0) {
     fprintf(stderr,
-	    "%s: stk500pp_initalize(): "
+	    "%s: stk500hv_initalize(): "
 	    "failed to set control stack\n",
             progname);
     return -1;
@@ -1155,8 +1431,12 @@ static int stk500hv_initialize(PROGRAMMER * pgm, AVRPART * p, enum hvmode mode)
   for (ln = lfirst(p->mem); ln; ln = lnext(ln)) {
     m = ldata(ln);
     if (strcmp(m->desc, "flash") == 0) {
-      if (m->page_size > 0)
-	PDATA(pgm)->flash_pagesize = m->page_size;
+      if (m->page_size > 0) {
+        if (m->page_size > 256)
+          PDATA(pgm)->flash_pagesize = 256;
+        else
+          PDATA(pgm)->flash_pagesize = m->page_size;
+      }
     } else if (strcmp(m->desc, "eeprom") == 0) {
       if (m->page_size > 0)
 	PDATA(pgm)->eeprom_pagesize = m->page_size;
@@ -1165,12 +1445,12 @@ static int stk500hv_initialize(PROGRAMMER * pgm, AVRPART * p, enum hvmode mode)
   free(PDATA(pgm)->flash_pagecache);
   free(PDATA(pgm)->eeprom_pagecache);
   if ((PDATA(pgm)->flash_pagecache = malloc(PDATA(pgm)->flash_pagesize)) == NULL) {
-    fprintf(stderr, "%s: stk500pp_initialize(): Out of memory\n",
+    fprintf(stderr, "%s: stk500hv_initialize(): Out of memory\n",
 	    progname);
     return -1;
   }
   if ((PDATA(pgm)->eeprom_pagecache = malloc(PDATA(pgm)->eeprom_pagesize)) == NULL) {
-    fprintf(stderr, "%s: stk500pp_initialize(): Out of memory\n",
+    fprintf(stderr, "%s: stk500hv_initialize(): Out of memory\n",
 	    progname);
     free(PDATA(pgm)->flash_pagecache);
     return -1;
@@ -1194,6 +1474,31 @@ static int stk500pp_initialize(PROGRAMMER * pgm, AVRPART * p)
 static int stk500hvsp_initialize(PROGRAMMER * pgm, AVRPART * p)
 {
   return stk500hv_initialize(pgm, p, HVSPMODE);
+}
+
+static void stk500v2_jtag3_disable(PROGRAMMER * pgm)
+{
+  unsigned char buf[16];
+  int result;
+
+  free(PDATA(pgm)->flash_pagecache);
+  PDATA(pgm)->flash_pagecache = NULL;
+  free(PDATA(pgm)->eeprom_pagecache);
+  PDATA(pgm)->eeprom_pagecache = NULL;
+
+  buf[0] = CMD_LEAVE_PROGMODE_ISP;
+  buf[1] = 1; // preDelay;
+  buf[2] = 1; // postDelay;
+
+  result = stk500v2_command(pgm, buf, 3, sizeof(buf));
+
+  if (result < 0) {
+    fprintf(stderr,
+            "%s: stk500v2_disable(): failed to leave programming mode\n",
+            progname);
+  }
+
+  return;
 }
 
 static void stk500v2_disable(PROGRAMMER * pgm)
@@ -1304,6 +1609,10 @@ static int stk500v2_open(PROGRAMMER * pgm, char * port)
     baud = USB_DEVICE_AVRISPMKII;
     PDATA(pgm)->pgmtype = PGMTYPE_AVRISP_MKII;
     pgm->set_sck_period = stk500v2_set_sck_period_mk2;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -1356,6 +1665,10 @@ static int stk600_open(PROGRAMMER * pgm, char * port)
     baud = USB_DEVICE_STK600;
     PDATA(pgm)->pgmtype = PGMTYPE_STK600;
     pgm->set_sck_period = stk600_set_sck_period;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_STK600;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_STK600;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -1440,9 +1753,7 @@ static int stk500hv_read_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
   if (strcmp(mem->desc, "flash") == 0) {
     buf[0] = mode == PPMODE? CMD_READ_FLASH_PP: CMD_READ_FLASH_HVSP;
     cmdlen = 3;
-    pagesize = mem->page_size;
-    if (pagesize == 0)
-      pagesize = 2;
+    pagesize = PDATA(pgm)->flash_pagesize;
     paddr = addr & ~(pagesize - 1);
     paddr_ptr = &PDATA(pgm)->flash_pageaddr;
     cache_ptr = PDATA(pgm)->flash_pagecache;
@@ -1553,6 +1864,112 @@ static int stk500hvsp_read_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
 }
 
 /*
+ * Read a single byte, ISP mode
+ *
+ * By now, only used on the JTAGICE3 which does not implement the
+ * CMD_SPI_MULTI SPI passthrough command.
+ */
+static int stk500isp_read_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
+			       unsigned long addr, unsigned char * value)
+{
+  int result, pollidx;
+  unsigned char buf[6];
+  unsigned long paddr = 0UL, *paddr_ptr = NULL;
+  unsigned int pagesize = 0;
+  unsigned char *cache_ptr = NULL;
+  OPCODE *op;
+
+  if (verbose >= 2)
+    fprintf(stderr, "%s: stk500isp_read_byte(.., %s, 0x%lx, ...)\n",
+	    progname, mem->desc, addr);
+
+  if (strcmp(mem->desc, "flash") == 0 ||
+      strcmp(mem->desc, "eeprom") == 0) {
+    // use paged access, and cache result
+    if (strcmp(mem->desc, "flash") == 0) {
+      pagesize = PDATA(pgm)->flash_pagesize;
+      paddr = addr & ~(pagesize - 1);
+      paddr_ptr = &PDATA(pgm)->flash_pageaddr;
+      cache_ptr = PDATA(pgm)->flash_pagecache;
+    } else {
+      pagesize = mem->page_size;
+      if (pagesize == 0)
+	pagesize = 1;
+      paddr = addr & ~(pagesize - 1);
+      paddr_ptr = &PDATA(pgm)->eeprom_pageaddr;
+      cache_ptr = PDATA(pgm)->eeprom_pagecache;
+    }
+
+    if (paddr == *paddr_ptr) {
+      *value = cache_ptr[addr & (pagesize - 1)];
+      return 0;
+    }
+
+    if (stk500v2_paged_load(pgm, p, mem, pagesize, paddr, pagesize) < 0)
+      return -1;
+
+    *paddr_ptr = paddr;
+    memcpy(cache_ptr, &mem->buf[paddr], pagesize);
+    *value = cache_ptr[addr & (pagesize - 1)];
+
+    return 0;
+  }
+
+  if (strcmp(mem->desc, "lfuse") == 0 ||
+	     strcmp(mem->desc, "fuse") == 0) {
+    buf[0] = CMD_READ_FUSE_ISP;
+    addr = 0;
+  } else if (strcmp(mem->desc, "hfuse") == 0) {
+    buf[0] = CMD_READ_FUSE_ISP;
+    addr = 1;
+  } else if (strcmp(mem->desc, "efuse") == 0) {
+    buf[0] = CMD_READ_FUSE_ISP;
+    addr = 2;
+  } else if (strcmp(mem->desc, "lock") == 0) {
+    buf[0] = CMD_READ_LOCK_ISP;
+  } else if (strcmp(mem->desc, "calibration") == 0) {
+    buf[0] = CMD_READ_OSCCAL_ISP;
+  } else if (strcmp(mem->desc, "signature") == 0) {
+    buf[0] = CMD_READ_SIGNATURE_ISP;
+  }
+
+  memset(buf + 1, 0, 5);
+  if ((op = mem->op[AVR_OP_READ]) == NULL) {
+    fprintf(stderr,
+	    "%s: stk500isp_read_byte(): invalid operation AVR_OP_READ on %s memory\n",
+	    progname, mem->desc);
+    return -1;
+  }
+  avr_set_bits(op, buf + 2);
+  if ((pollidx = avr_get_output_index(op)) == -1) {
+    fprintf(stderr,
+	    "%s: stk500isp_read_byte(): cannot determine pollidx to read %s memory\n",
+	    progname, mem->desc);
+    pollidx = 3;
+  }
+  buf[1] = pollidx + 1;
+  avr_set_addr(op, buf + 2, addr);
+
+  if (verbose >= 2)
+    fprintf(stderr, "%s: stk500isp_read_byte(): Sending read memory command: ",
+	    progname);
+
+  result = stk500v2_command(pgm, buf, 6, sizeof(buf));
+
+  if (result < 0) {
+    fprintf(stderr,
+	    "%s: stk500isp_read_byte(): "
+	    "timeout/error communicating with programmer\n",
+	    progname);
+    return -1;
+  }
+
+  *value = buf[2];
+
+  return 0;
+}
+
+/*
  * Write one byte, generic HV mode
  */
 static int stk500hv_write_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
@@ -1571,9 +1988,7 @@ static int stk500hv_write_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
 
   if (strcmp(mem->desc, "flash") == 0) {
     buf[0] = mode == PPMODE? CMD_PROGRAM_FLASH_PP: CMD_PROGRAM_FLASH_HVSP;
-    pagesize = mem->page_size;
-    if (pagesize == 0)
-      pagesize = 2;
+    pagesize = PDATA(pgm)->flash_pagesize;
     paddr = addr & ~(pagesize - 1);
     paddr_ptr = &PDATA(pgm)->flash_pageaddr;
     cache_ptr = PDATA(pgm)->flash_pagecache;
@@ -1714,6 +2129,122 @@ static int stk500hvsp_write_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
   return stk500hv_write_byte(pgm, p, mem, addr, data, HVSPMODE);
 }
 
+
+/*
+ * Write one byte, ISP mode
+ */
+static int stk500isp_write_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
+				unsigned long addr, unsigned char data)
+{
+  int result;
+  unsigned char buf[5];
+  unsigned long paddr = 0UL, *paddr_ptr = NULL;
+  unsigned int pagesize = 0;
+  unsigned char *cache_ptr = NULL;
+  OPCODE *op;
+
+  if (verbose >= 2)
+    fprintf(stderr, "%s: stk500isp_write_byte(.., %s, 0x%lx, ...)\n",
+	    progname, mem->desc, addr);
+
+  if (strcmp(mem->desc, "flash") == 0 ||
+      strcmp(mem->desc, "eeprom") == 0) {
+    if (strcmp(mem->desc, "flash") == 0) {
+      pagesize = PDATA(pgm)->flash_pagesize;
+      paddr = addr & ~(pagesize - 1);
+      paddr_ptr = &PDATA(pgm)->flash_pageaddr;
+      cache_ptr = PDATA(pgm)->flash_pagecache;
+    } else {
+      pagesize = mem->page_size;
+      if (pagesize == 0)
+	pagesize = 1;
+      paddr = addr & ~(pagesize - 1);
+      paddr_ptr = &PDATA(pgm)->eeprom_pageaddr;
+      cache_ptr = PDATA(pgm)->eeprom_pagecache;
+    }
+
+    /*
+     * We use paged writes for flash and EEPROM.  As both, flash and
+     * EEPROM cells can only be programmed from `1' to `0' bits (even
+     * EEPROM does not support auto-erase in parallel mode), we just
+     * pre-fill the page cache with 0xff, so all those cells that are
+     * outside our current address will remain unaffected.
+     */
+    memset(cache_ptr, 0xff, pagesize);
+    cache_ptr[addr & (pagesize - 1)] = data;
+
+    memcpy(mem->buf + paddr, cache_ptr, pagesize);
+    stk500v2_paged_write(pgm, p, mem, pagesize, addr, pagesize);
+
+    /* Invalidate the page cache. */
+    *paddr_ptr = (unsigned long)-1L;
+
+    return 0;
+  }
+
+  memset(buf, 0, sizeof buf);
+  if (strcmp(mem->desc, "lfuse") == 0 ||
+	     strcmp(mem->desc, "fuse") == 0) {
+    buf[0] = CMD_PROGRAM_FUSE_ISP;
+    addr = 0;
+  } else if (strcmp(mem->desc, "hfuse") == 0) {
+    buf[0] = CMD_PROGRAM_FUSE_ISP;
+    addr = 1;
+  } else if (strcmp(mem->desc, "efuse") == 0) {
+    buf[0] = CMD_PROGRAM_FUSE_ISP;
+    addr = 2;
+  } else if (strcmp(mem->desc, "lock") == 0) {
+    buf[0] = CMD_PROGRAM_LOCK_ISP;
+  } else {
+    fprintf(stderr,
+	    "%s: stk500isp_write_byte(): "
+	    "unsupported memory type: %s\n",
+	    progname, mem->desc);
+    return -1;
+  }
+
+  if ((op = mem->op[AVR_OP_WRITE]) == NULL) {
+    fprintf(stderr,
+	    "%s: stk500isp_write_byte(): "
+	    "no AVR_OP_WRITE for %s memory\n",
+	    progname, mem->desc);
+    return -1;
+  }
+
+  avr_set_bits(op, buf + 1);
+  avr_set_addr(op, buf + 1, addr);
+  avr_set_input(op, buf + 1, data);
+
+  if (verbose >= 2)
+    fprintf(stderr, "%s: stk500isp_write_byte(): Sending write memory command: ",
+	    progname);
+
+  result = stk500v2_command(pgm, buf, 5, sizeof(buf));
+
+  if (result < 0) {
+    fprintf(stderr,
+	    "%s: stk500isp_write_byte(): "
+	    "timeout/error communicating with programmer\n",
+	    progname);
+    return -1;
+  }
+
+  if (buf[0] == CMD_PROGRAM_FUSE_ISP) {
+    /*
+     * The JTAGICE3 needs one leave progmode / enter progmode cycle
+     * after writing fuses, before being able to read them back.
+     */
+    buf[0] = CMD_LEAVE_PROGMODE_ISP;
+    buf[1] = 1; // preDelay;
+    buf[2] = 1; // postDelay;
+
+    stk500v2_command(pgm, buf, 3, sizeof(buf));
+
+    pgm->program_enable(pgm, p);
+  }
+
+  return 0;
+}
 
 static int stk500v2_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
                                 unsigned int page_size,
@@ -2151,6 +2682,15 @@ static int stk500hvsp_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
 }
 
 
+static int stk500v2_page_erase(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
+                               unsigned int addr)
+{
+  fprintf(stderr,
+          "%s: stk500v2_page_erase(): this function must never be called\n",
+          progname);
+  return -1;
+}
+
 static int stk500v2_set_vtarget(PROGRAMMER * pgm, double v)
 {
   unsigned char uaref, utarg;
@@ -2463,6 +3003,28 @@ static int stk600_set_sck_period(PROGRAMMER * pgm, double v)
   return stk500v2_setparm2(pgm, PARAM2_SCK_DURATION, sck);
 }
 
+static int stk500v2_jtag3_set_sck_period(PROGRAMMER * pgm, double v)
+{
+  unsigned char value[3];
+  unsigned int sck;
+
+  if (v < 1E-6)
+    sck = 0x400;
+  else if (v > 1E-3)
+    sck = 1;
+  else
+    sck = 1.0 / (1000.0 * v);
+
+  value[0] = CMD_SET_SCK;
+  value[1] = sck & 0xff;
+  value[2] = (sck >> 8) & 0xff;
+
+  if (stk500v2_jtag3_send(pgm, value, 3) < 0)
+    return -1;
+  if (stk500v2_jtag3_recv(pgm, value, 3) < 0)
+    return -1;
+  return 0;
+}
 
 static int stk500v2_getparm(PROGRAMMER * pgm, unsigned char parm, unsigned char * value)
 {
@@ -2584,7 +3146,8 @@ static void stk500v2_display(PROGRAMMER * pgm, const char * p)
     case PGMTYPE_STK600:      pgmname = "STK600"; break;
     default:                  pgmname = "None";
   }
-  if (PDATA(pgm)->pgmtype != PGMTYPE_JTAGICE_MKII) {
+  if (PDATA(pgm)->pgmtype != PGMTYPE_JTAGICE_MKII &&
+      PDATA(pgm)->pgmtype != PGMTYPE_JTAGICE3) {
     fprintf(stderr, "%sProgrammer Model: %s\n", p, pgmname);
     stk500v2_getparm(pgm, PARAM_HW_VER, &hdw);
     stk500v2_getparm(pgm, PARAM_SW_MAJOR, &maj);
@@ -2666,6 +3229,14 @@ static void stk500v2_print_parms1(PROGRAMMER * pgm, const char * p)
     pgm->cookie = mycookie;
     fprintf(stderr, "%sVtarget         : %.1f V\n", p,
 	    b2_to_u16(vtarget_jtag) / 1000.0);
+  } else if (PDATA(pgm)->pgmtype == PGMTYPE_JTAGICE3) {
+    mycookie = pgm->cookie;
+    pgm->cookie = PDATA(pgm)->chained_pdata;
+    jtag3_getparm(pgm, SCOPE_GENERAL, 1, PARM3_VTARGET, vtarget_jtag, 2);
+    pgm->cookie = mycookie;
+    fprintf(stderr, "%sVtarget         : %.1f V\n", p,
+	    b2_to_u16(vtarget_jtag) / 1000.0);
+
   } else {
     stk500v2_getparm(pgm, PARAM_VTARGET, &vtarget);
     fprintf(stderr, "%sVtarget         : %.1f V\n", p, vtarget / 10.0);
@@ -2707,6 +3278,20 @@ static void stk500v2_print_parms1(PROGRAMMER * pgm, const char * p)
     stk500v2_getparm(pgm, PARAM_SCK_DURATION, &sck_duration);
     fprintf(stderr, "%sSCK period      : %.2f us\n", p,
 	    (float) 1000000 / avrispmkIIfreqs[sck_duration]);
+    break;
+
+  case PGMTYPE_JTAGICE3:
+    {
+      unsigned char cmd[4];
+
+      cmd[0] = CMD_GET_SCK;
+      if (stk500v2_jtag3_send(pgm, cmd, 1) >= 0 &&
+	  stk500v2_jtag3_recv(pgm, cmd, 4) >= 2) {
+	unsigned int sck = cmd[1] | (cmd[2] << 8);
+	fprintf(stderr, "%sSCK period      : %.2f us\n", p,
+		(float)(1E6 / (1000.0 * sck)));
+      }
+    }
     break;
 
   case PGMTYPE_STK600:
@@ -2795,6 +3380,10 @@ static int stk500v2_jtagmkII_open(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_JTAGICEMKII;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -2852,6 +3441,23 @@ static void stk500v2_jtagmkII_close(PROGRAMMER * pgm)
 
 
 /*
+ * Close JTAGICE3.
+ */
+static void stk500v2_jtag3_close(PROGRAMMER * pgm)
+{
+  void *mycookie;
+
+  if (verbose >= 2)
+    fprintf(stderr, "%s: stk500v2_jtag3_close()\n", progname);
+
+  mycookie = pgm->cookie;
+  pgm->cookie = PDATA(pgm)->chained_pdata;
+  jtag3_close(pgm);
+  pgm->cookie = mycookie;
+}
+
+
+/*
  * Wrapper functions for the AVR Dragon in ISP mode.  This mode
  * uses the normal JTAG ICE mkII packet stream to communicate with the
  * ICE, but then encapsulates AVRISP mkII commands using
@@ -2887,6 +3493,10 @@ static int stk500v2_dragon_isp_open(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_AVRDRAGON;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -2960,6 +3570,10 @@ static int stk500v2_dragon_hv_open(PROGRAMMER * pgm, char * port)
 #if defined(HAVE_LIBUSB)
     serdev = &usb_serdev;
     baud = USB_DEVICE_AVRDRAGON;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_MKII;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_MKII;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_MKII;
+    pgm->fd.usb.eep = 0;           /* no seperate EP for events */
 #else
     fprintf(stderr, "avrdude was compiled without usb support.\n");
     return -1;
@@ -2995,6 +3609,77 @@ static int stk500v2_dragon_hv_open(PROGRAMMER * pgm, char * port)
 
   return 0;
 }
+
+/*
+ * Wrapper functions for the JTAGICE3 in ISP mode.  This mode
+ * uses the normal JTAGICE3 packet stream to communicate with the
+ * ICE, but then encapsulates AVRISP mkII commands using
+ * scope AVRISP.
+ */
+
+/*
+ * Open a JTAGICE3 in ISP mode.
+ */
+static int stk500v2_jtag3_open(PROGRAMMER * pgm, char * port)
+{
+  long baud;
+  void *mycookie;
+  int rv;
+
+  if (verbose >= 2)
+    fprintf(stderr, "%s: stk500v2_jtag3_open()\n", progname);
+
+  /*
+   * The serial_open() function for USB overrides
+   * the meaning of the "baud" parameter to be the USB device ID to
+   * search for.
+   */
+  if (strncmp(port, "usb", 3) == 0) {
+#if defined(HAVE_LIBUSB)
+    serdev = &usb_serdev_frame;
+    baud = USB_DEVICE_JTAGICE3;
+    pgm->fd.usb.max_xfer = USBDEV_MAX_XFER_3;
+    pgm->fd.usb.rep = USBDEV_BULK_EP_READ_3;
+    pgm->fd.usb.wep = USBDEV_BULK_EP_WRITE_3;
+    pgm->fd.usb.eep = USBDEV_EVT_EP_READ_3;
+#else
+    fprintf(stderr, "avrdude was compiled without usb support.\n");
+    return -1;
+#endif
+  }
+
+  strcpy(pgm->port, port);
+  if (serial_open(port, baud, &pgm->fd)==-1) {
+    return -1;
+  }
+
+  /*
+   * drain any extraneous input
+   */
+  stk500v2_drain(pgm, 0);
+
+  mycookie = pgm->cookie;
+  pgm->cookie = PDATA(pgm)->chained_pdata;
+  if ((rv = jtag3_getsync(pgm, 42)) != 0) {
+    if (rv != JTAGII_GETSYNC_FAIL_GRACEFUL)
+        fprintf(stderr,
+                "%s: failed to sync with the JTAGICE3 in ISP mode\n",
+                progname);
+    pgm->cookie = mycookie;
+    return -1;
+  }
+  pgm->cookie = mycookie;
+
+  PDATA(pgm)->pgmtype = PGMTYPE_JTAGICE3;
+
+  if (pgm->bitclock != 0.0) {
+    if (pgm->set_sck_period(pgm, pgm->bitclock) != 0)
+      return -1;
+  }
+
+  return 0;
+}
+
 
 /*
  * XPROG wrapper
@@ -3144,6 +3829,15 @@ static int stk600_xprog_program_enable(PROGRAMMER * pgm, AVRPART * p)
     return 0;
 }
 
+static unsigned char stk600_xprog_memtype(PROGRAMMER * pgm, unsigned long addr)
+{
+    if (addr >= PDATA(pgm)->boot_start)
+        return XPRG_MEM_TYPE_BOOT;
+    else
+        return XPRG_MEM_TYPE_APPL;
+}
+
+
 static void stk600_xprog_disable(PROGRAMMER * pgm)
 {
     unsigned char buf[2];
@@ -3167,12 +3861,15 @@ static int stk600_xprog_write_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
     memset(b, 0, sizeof(b));
 
     if (strcmp(mem->desc, "flash") == 0) {
+        memcode = stk600_xprog_memtype(pgm, addr);
+    } else if (strcmp(mem->desc, "application") == 0 ||
+               strcmp(mem->desc, "apptable") == 0) {
         memcode = XPRG_MEM_TYPE_APPL;
     } else if (strcmp(mem->desc, "boot") == 0) {
         memcode = XPRG_MEM_TYPE_BOOT;
     } else if (strcmp(mem->desc, "eeprom") == 0) {
         memcode = XPRG_MEM_TYPE_EEPROM;
-    } else if (strcmp(mem->desc, "lockbits") == 0) {
+    } else if (strncmp(mem->desc, "lock", strlen("lock")) == 0) {
         memcode = XPRG_MEM_TYPE_LOCKBITS;
     } else if (strncmp(mem->desc, "fuse", strlen("fuse")) == 0) {
         memcode = XPRG_MEM_TYPE_FUSE;
@@ -3243,6 +3940,9 @@ static int stk600_xprog_read_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
     unsigned char b[8];
 
     if (strcmp(mem->desc, "flash") == 0) {
+        b[1] = stk600_xprog_memtype(pgm, addr);
+    } else if (strcmp(mem->desc, "application") == 0 ||
+               strcmp(mem->desc, "apptable") == 0) {
         b[1] = XPRG_MEM_TYPE_APPL;
     } else if (strcmp(mem->desc, "boot") == 0) {
         b[1] = XPRG_MEM_TYPE_BOOT;
@@ -3252,7 +3952,7 @@ static int stk600_xprog_read_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
         b[1] = XPRG_MEM_TYPE_APPL;
     } else if (strncmp(mem->desc, "fuse", strlen("fuse")) == 0) {
         b[1] = XPRG_MEM_TYPE_FUSE;
-    } else if (strcmp(mem->desc, "lockbits") == 0) {
+    } else if (strncmp(mem->desc, "lock", strlen("lock")) == 0) {
         b[1] = XPRG_MEM_TYPE_LOCKBITS;
     } else if (strcmp(mem->desc, "calibration") == 0) {
         b[1] = XPRG_MEM_TYPE_FACTORY_CALIBRATION;
@@ -3291,7 +3991,7 @@ static int stk600_xprog_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
     unsigned char *b;
     unsigned int offset;
     unsigned char memtype;
-    int n_bytes_orig = n_bytes;
+    int n_bytes_orig = n_bytes, dynamic_memtype = 0;
     unsigned long use_ext_addr = 0;
 
     /*
@@ -3307,6 +4007,12 @@ static int stk600_xprog_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
      * "TIF address space".
      */
     if (strcmp(mem->desc, "flash") == 0) {
+        memtype = 0;
+        dynamic_memtype = 1;
+        if (mem->size > 64 * 1024)
+            use_ext_addr = (1UL << 31);
+    } else if (strcmp(mem->desc, "application") == 0 ||
+               strcmp(mem->desc, "apptable") == 0) {
         memtype = XPRG_MEM_TYPE_APPL;
         if (mem->size > 64 * 1024)
             use_ext_addr = (1UL << 31);
@@ -3322,7 +4028,7 @@ static int stk600_xprog_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
         memtype = XPRG_MEM_TYPE_APPL;
     } else if (strncmp(mem->desc, "fuse", strlen("fuse")) == 0) {
         memtype = XPRG_MEM_TYPE_FUSE;
-    } else if (strcmp(mem->desc, "lockbits") == 0) {
+    } else if (strncmp(mem->desc, "lock", strlen("lock")) == 0) {
         memtype = XPRG_MEM_TYPE_LOCKBITS;
     } else if (strcmp(mem->desc, "calibration") == 0) {
         memtype = XPRG_MEM_TYPE_FACTORY_CALIBRATION;
@@ -3350,6 +4056,9 @@ static int stk600_xprog_paged_load(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
     }
 
     while (n_bytes != 0) {
+	if (dynamic_memtype)
+	    memtype = stk600_xprog_memtype(pgm, addr - mem->offset);
+
 	b[0] = XPRG_CMD_READ_MEM;
 	b[1] = memtype;
 	b[2] = addr >> 24;
@@ -3385,7 +4094,7 @@ static int stk600_xprog_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
     unsigned char *b;
     unsigned int offset;
     unsigned char memtype;
-    int n_bytes_orig = n_bytes;
+    int n_bytes_orig = n_bytes, dynamic_memtype = 0;
     size_t writesize;
     unsigned long use_ext_addr = 0;
     unsigned char writemode;
@@ -3407,6 +4116,13 @@ static int stk600_xprog_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
      * "TIF address space".
      */
     if (strcmp(mem->desc, "flash") == 0) {
+        memtype = 0;
+        dynamic_memtype = 1;
+        writemode = (1 << XPRG_MEM_WRITE_WRITE);
+        if (mem->size > 64 * 1024)
+            use_ext_addr = (1UL << 31);
+    } else if (strcmp(mem->desc, "application") == 0 ||
+               strcmp(mem->desc, "apptable") == 0) {
         memtype = XPRG_MEM_TYPE_APPL;
         writemode = (1 << XPRG_MEM_WRITE_WRITE);
         if (mem->size > 64 * 1024)
@@ -3427,7 +4143,7 @@ static int stk600_xprog_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
     } else if (strncmp(mem->desc, "fuse", strlen("fuse")) == 0) {
         memtype = XPRG_MEM_TYPE_FUSE;
         writemode = (1 << XPRG_MEM_WRITE_WRITE);
-    } else if (strcmp(mem->desc, "lockbits") == 0) {
+    } else if (strncmp(mem->desc, "lock", strlen("lock")) == 0) {
         memtype = XPRG_MEM_TYPE_LOCKBITS;
         writemode = (1 << XPRG_MEM_WRITE_WRITE);
     } else if (strcmp(mem->desc, "calibration") == 0) {
@@ -3458,6 +4174,10 @@ static int stk600_xprog_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
     }
 
     while (n_bytes != 0) {
+
+	if (dynamic_memtype)
+	    memtype = stk600_xprog_memtype(pgm, addr - mem->offset);
+
 	if (page_size > 256) {
 	    /*
 	     * AVR079 is not quite clear.  While it suggests that
@@ -3485,11 +4205,7 @@ static int stk600_xprog_paged_write(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
                 }
 		b[0] = XPRG_CMD_WRITE_MEM;
 		b[1] = memtype;
-		if (chunk + 256 == page_size) {
-		    b[2] = writemode;	/* last chunk */
-		} else {
-		    b[2] = 0;	/* initial/intermediate chunk: just download */
-		}
+		b[2] = writemode;
 		b[3] = addr >> 24;
 		b[4] = addr >> 16;
 		b[5] = addr >> 8;
@@ -3583,6 +4299,42 @@ static int stk600_xprog_chip_erase(PROGRAMMER * pgm, AVRPART * p)
     return 0;
 }
 
+static int stk600_xprog_page_erase(PROGRAMMER * pgm, AVRPART * p, AVRMEM * m,
+                                   unsigned int addr)
+{
+    unsigned char b[6];
+
+    if (strcmp(m->desc, "flash") == 0) {
+      b[1] = stk600_xprog_memtype(pgm, addr - m->offset) == XPRG_MEM_TYPE_APPL?
+        XPRG_ERASE_APP_PAGE: XPRG_ERASE_BOOT_PAGE;
+    } else if (strcmp(m->desc, "application") == 0 ||
+               strcmp(m->desc, "apptable") == 0) {
+      b[1] = XPRG_ERASE_APP_PAGE;
+    } else if (strcmp(m->desc, "boot") == 0) {
+      b[1] = XPRG_ERASE_BOOT_PAGE;
+    } else if (strcmp(m->desc, "eeprom") == 0) {
+      b[1] = XPRG_ERASE_EEPROM_PAGE;
+    } else {
+      fprintf(stderr,
+              "%s: stk600_xprog_page_erase(): unknown paged memory \"%s\"\n",
+              progname, m->desc);
+      return -1;
+    }
+    addr += m->offset;
+    b[0] = XPRG_CMD_ERASE;
+    b[2] = addr >> 24;
+    b[3] = addr >> 16;
+    b[4] = addr >> 8;
+    b[5] = addr;
+    if (stk600_xprog_command(pgm, b, 6, 2) < 0) {
+	    fprintf(stderr,
+		    "%s: stk600_xprog_page_erase(): XPRG_CMD_ERASE(%d) failed\n",
+		    progname, b[1]);
+	    return -1;
+	}
+    return 0;
+}
+
 /*
  * Modify pgm's methods for XPROG operation.
  */
@@ -3594,6 +4346,7 @@ static void stk600_setup_xprog(PROGRAMMER * pgm)
     pgm->write_byte = stk600_xprog_write_byte;
     pgm->paged_load = stk600_xprog_paged_load;
     pgm->paged_write = stk600_xprog_paged_write;
+    pgm->page_erase = stk600_xprog_page_erase;
     pgm->chip_erase = stk600_xprog_chip_erase;
 }
 
@@ -3609,6 +4362,7 @@ static void stk600_setup_isp(PROGRAMMER * pgm)
     pgm->write_byte = avr_write_byte_default;
     pgm->paged_load = stk500v2_paged_load;
     pgm->paged_write = stk500v2_paged_write;
+    pgm->page_erase = stk500v2_page_erase;
     pgm->chip_erase = stk500v2_chip_erase;
 }
 
@@ -3638,6 +4392,7 @@ void stk500v2_initpgm(PROGRAMMER * pgm)
    */
   pgm->paged_write    = stk500v2_paged_write;
   pgm->paged_load     = stk500v2_paged_load;
+  pgm->page_erase     = stk500v2_page_erase;
   pgm->print_parms    = stk500v2_print_parms;
   pgm->set_vtarget    = stk500v2_set_vtarget;
   pgm->set_varef      = stk500v2_set_varef;
@@ -3745,6 +4500,7 @@ void stk500v2_jtagmkII_initpgm(PROGRAMMER * pgm)
    */
   pgm->paged_write    = stk500v2_paged_write;
   pgm->paged_load     = stk500v2_paged_load;
+  pgm->page_erase     = stk500v2_page_erase;
   pgm->print_parms    = stk500v2_print_parms;
   pgm->set_sck_period = stk500v2_set_sck_period_mk2;
   pgm->perform_osccal = stk500v2_perform_osccal;
@@ -3779,6 +4535,7 @@ void stk500v2_dragon_isp_initpgm(PROGRAMMER * pgm)
    */
   pgm->paged_write    = stk500v2_paged_write;
   pgm->paged_load     = stk500v2_paged_load;
+  pgm->page_erase     = stk500v2_page_erase;
   pgm->print_parms    = stk500v2_print_parms;
   pgm->set_sck_period = stk500v2_set_sck_period_mk2;
   pgm->setup          = stk500v2_jtagmkII_setup;
@@ -3882,6 +4639,7 @@ void stk600_initpgm(PROGRAMMER * pgm)
    */
   pgm->paged_write    = stk500v2_paged_write;
   pgm->paged_load     = stk500v2_paged_load;
+  pgm->page_erase     = stk500v2_page_erase;
   pgm->print_parms    = stk500v2_print_parms;
   pgm->set_vtarget    = stk600_set_vtarget;
   pgm->set_varef      = stk600_set_varef;
@@ -3960,6 +4718,41 @@ void stk600hvsp_initpgm(PROGRAMMER * pgm)
   pgm->set_sck_period = stk600_set_sck_period;
   pgm->setup          = stk500v2_setup;
   pgm->teardown       = stk500v2_teardown;
+  pgm->page_size      = 256;
+}
+
+const char stk500v2_jtag3_desc[] = "Atmel JTAGICE3 in ISP mode";
+
+void stk500v2_jtag3_initpgm(PROGRAMMER * pgm)
+{
+  strcpy(pgm->type, "JTAG3_ISP");
+
+  /*
+   * mandatory functions
+   */
+  pgm->initialize     = stk500v2_jtag3_initialize;
+  pgm->display        = stk500v2_display;
+  pgm->enable         = stk500v2_enable;
+  pgm->disable        = stk500v2_jtag3_disable;
+  pgm->program_enable = stk500v2_program_enable;
+  pgm->chip_erase     = stk500v2_chip_erase;
+  pgm->cmd            = stk500v2_jtag3_cmd;
+  pgm->open           = stk500v2_jtag3_open;
+  pgm->close          = stk500v2_jtag3_close;
+  pgm->read_byte      = stk500isp_read_byte;
+  pgm->write_byte     = stk500isp_write_byte;
+
+  /*
+   * optional functions
+   */
+  pgm->paged_write    = stk500v2_paged_write;
+  pgm->paged_load     = stk500v2_paged_load;
+  pgm->page_erase     = stk500v2_page_erase;
+  pgm->print_parms    = stk500v2_print_parms;
+  pgm->set_sck_period = stk500v2_jtag3_set_sck_period;
+  pgm->perform_osccal = stk500v2_perform_osccal;
+  pgm->setup          = stk500v2_jtag3_setup;
+  pgm->teardown       = stk500v2_jtag3_teardown;
   pgm->page_size      = 256;
 }
 

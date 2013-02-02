@@ -13,8 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -39,8 +38,7 @@ enum {
 };
 #define PIN_MASK    (UINT_MAX>>1)
 #define PIN_INVERSE (~(PIN_MASK))	/* flag for inverted pin in serbb */
-
-#define LED_ON(fd,pin)  ppi_setpin(fd,pin,0)
-#define LED_OFF(fd,pin) ppi_setpin(fd,pin,1)
+#define PIN_MIN     1   /* smallest allowed pin number */
+#define PIN_MAX     255 /* largest allowed pin number */
 
 #endif

@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -48,6 +47,7 @@ int yylex(void);
 int yyerror(char * errmsg);
 
 static int assign_pin(int pinno, TOKEN * v, int invert);
+static int assign_pin_list(int invert);
 static int which_opcode(TOKEN * opcode);
 static int parse_cmdbits(OPCODE * op);
 
@@ -93,11 +93,13 @@ static int pin_name;
 %token K_IO
 %token K_LOADPAGE
 %token K_MAX_WRITE_DELAY
+%token K_MCU_BASE
 %token K_MIN_WRITE_DELAY
 %token K_MISO
 %token K_MOSI
 %token K_NUM_PAGES
 %token K_NVM_BASE
+%token K_OCDREV
 %token K_OFFSET
 %token K_PAGEL
 %token K_PARALLEL
@@ -198,12 +200,26 @@ static int pin_name;
 %token TKN_EQUAL
 %token TKN_SEMI
 %token TKN_TILDE
+%token TKN_LEFT_PAREN
+%token TKN_RIGHT_PAREN
 %token TKN_NUMBER
+%token TKN_NUMBER_REAL
 %token TKN_STRING
 
 %start configuration
 
 %%
+
+number_real : 
+ TKN_NUMBER {
+    $$ = $1;
+    /* convert value to real */
+    $$->value.number_real = $$->value.number;
+    $$->value.type = V_NUM_REAL;
+  } |
+  TKN_NUMBER_REAL {
+    $$ = $1;
+  }
 
 configuration :
   /* empty */ | config
@@ -238,8 +254,8 @@ def :
     free_token($3);
   } |
 
-  K_DEFAULT_BITCLOCK TKN_EQUAL TKN_NUMBER TKN_SEMI {
-    default_bitclock = $3->value.number;
+  K_DEFAULT_BITCLOCK TKN_EQUAL number_real TKN_SEMI {
+    default_bitclock = $3->value.number_real;
     free_token($3);
   }
 ;
@@ -526,22 +542,11 @@ pin_number:
 ;
 
 pin_list:
-  num_list {
-    {
-      TOKEN * t;
-      int pin;
-
-      current_prog->pinno[pin_name] = 0;
-
-      while (lsize(number_list)) {
-        t = lrmv_n(number_list, 1);
-        pin = t->value.number;
-        current_prog->pinno[pin_name] |= (1 << pin);
-
-        free_token(t);
-      }
-    }
-  }
+  num_list            { assign_pin_list(0); }
+  |
+  TKN_TILDE TKN_NUMBER { assign_pin(pin_name, $2, 1); }
+  |
+  TKN_TILDE TKN_LEFT_PAREN num_list TKN_RIGHT_PAREN { assign_pin_list(1); }
   |
   /* empty */ {
     current_prog->pinno[pin_name] = 0;
@@ -1079,9 +1084,21 @@ part_parm :
       free_token($3);
     } |
 
+  K_MCU_BASE TKN_EQUAL TKN_NUMBER
+    {
+      current_part->mcu_base = $3->value.number;
+      free_token($3);
+    } |
+
   K_NVM_BASE TKN_EQUAL TKN_NUMBER
     {
       current_part->nvm_base = $3->value.number;
+      free_token($3);
+    } |
+
+  K_OCDREV          TKN_EQUAL TKN_NUMBER
+    {
+      current_part->ocdrev = $3->value.number;
       free_token($3);
     } |
 
@@ -1312,7 +1329,8 @@ mem_spec :
 static char * vtypestr(int type)
 {
   switch (type) {
-    case V_NUM : return "NUMERIC";
+    case V_NUM : return "INTEGER";
+    case V_NUM_REAL: return "REAL";
     case V_STR : return "STRING";
     default:
       return "<UNKNOWN>";
@@ -1328,17 +1346,35 @@ static int assign_pin(int pinno, TOKEN * v, int invert)
   value = v->value.number;
   free_token(v);
 
-  if ((value <= 0) || (value >= 18)) {
+  if ((value < PIN_MIN) || (value > PIN_MAX)) {
     fprintf(stderr, 
             "%s: error at line %d of %s: pin must be in the "
-            "range 1-17\n",
-            progname, lineno, infile);
+            "range %d-%d\n",
+            progname, lineno, infile, PIN_MIN, PIN_MAX);
     exit(1);
   }
   if (invert)
     value |= PIN_INVERSE;
 
   current_prog->pinno[pinno] = value;
+
+  return 0;
+}
+
+static int assign_pin_list(int invert)
+{
+  TOKEN * t;
+  int pin;
+
+  current_prog->pinno[pin_name] = 0;
+  while (lsize(number_list)) {
+    t = lrmv_n(number_list, 1);
+    pin = t->value.number;
+    current_prog->pinno[pin_name] |= (1 << pin);
+    if (invert)
+      current_prog->pinno[pin_name] |= PIN_INVERSE;
+    free_token(t);
+  }
 
   return 0;
 }

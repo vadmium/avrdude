@@ -13,8 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -106,11 +105,14 @@ static int par_setpin(PROGRAMMER * pgm, int pin, int value)
 
 static void par_setmany(PROGRAMMER * pgm, unsigned int pinset, int value)
 {
-  int pin;
+  int pin, mask;
+
+  /* mask is anything non-pin - needs to be applied to each par_setpin to preserve inversion */
+  mask = pinset & (~PIN_MASK);
 
   for (pin = 1; pin <= 17; pin++) {
     if (pinset & (1 << pin))
-      par_setpin(pgm, pin, value);
+      par_setpin(pgm, pin | mask, value);
   }
 }
 

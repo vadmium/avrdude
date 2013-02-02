@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -213,7 +212,7 @@ int avr_mem_hiaddr(AVRMEM * mem)
  * Return the number of bytes read, or < 0 if an error occurs.  
  */
 int avr_read(PROGRAMMER * pgm, AVRPART * p, char * memtype,
-             AVRPART * v, int verb)
+             AVRPART * v)
 {
   unsigned long    i, lastaddr;
   unsigned char    cmd[4];
@@ -302,7 +301,10 @@ int avr_read(PROGRAMMER * pgm, AVRPART * p, char * memtype,
       report_progress(pageaddr, mem->size, NULL);
     }
     if (!failure) {
-      if (strcasecmp(mem->desc, "flash") == 0)
+      if (strcasecmp(mem->desc, "flash") == 0 ||
+          strcasecmp(mem->desc, "application") == 0 ||
+          strcasecmp(mem->desc, "apptable") == 0 ||
+          strcasecmp(mem->desc, "boot") == 0)
         return avr_mem_hiaddr(mem);
       else
         return mem->size;
@@ -333,7 +335,10 @@ int avr_read(PROGRAMMER * pgm, AVRPART * p, char * memtype,
     report_progress(i, mem->size, NULL);
   }
 
-  if (strcasecmp(mem->desc, "flash") == 0)
+  if (strcasecmp(mem->desc, "flash") == 0 ||
+      strcasecmp(mem->desc, "application") == 0 ||
+      strcasecmp(mem->desc, "apptable") == 0 ||
+      strcasecmp(mem->desc, "boot") == 0)
     return avr_mem_hiaddr(mem);
   else
     return i;
@@ -712,7 +717,7 @@ int avr_write_byte(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
  * Return the number of bytes written, or -1 if an error occurs.
  */
 int avr_write(PROGRAMMER * pgm, AVRPART * p, char * memtype, int size, 
-              int verb)
+              int auto_erase)
 {
   int              rc;
   int              newpage, page_tainted, flush_page, do_write;
@@ -807,6 +812,10 @@ int avr_write(PROGRAMMER * pgm, AVRPART * p, char * memtype, int size,
           break;
         }
       if (need_write) {
+        rc = 0;
+        if (auto_erase)
+          rc = pgm->page_erase(pgm, p, m, pageaddr);
+        if (rc >= 0)
           rc = pgm->paged_write(pgm, p, m, m->page_size, pageaddr, m->page_size);
         if (rc < 0)
           /* paged write failed, fall back to byte-at-a-time write below */
@@ -919,7 +928,7 @@ int avr_signature(PROGRAMMER * pgm, AVRPART * p)
   int rc;
 
   report_progress (0,1,"Reading");
-  rc = avr_read(pgm, p, "signature", 0, 0);
+  rc = avr_read(pgm, p, "signature", 0);
   if (rc < 0) {
     fprintf(stderr,
             "%s: error reading signature data for part \"%s\", rc=%d\n",

@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -57,9 +56,12 @@ SIGN     [+-]
 
 %%
 
-{SIGN}*{DIGIT}+            { yylval = number(yytext); return TKN_NUMBER; }
-{SIGN}*{DIGIT}+"."{DIGIT}* { yylval = number(yytext); return TKN_NUMBER; }
-{SIGN}*"."{DIGIT}*         { yylval = number(yytext); return TKN_NUMBER; }
+#{SIGN}*{DIGIT}+            { yylval = number(yytext); return TKN_NUMBER; }
+#{SIGN}*{DIGIT}+"."{DIGIT}* { yylval = number_real(yytext); return TKN_NUMBER_REAL; }
+#{SIGN}*"."{DIGIT}*         { yylval = number_real(yytext); return TKN_NUMBER_REAL; }
+{DIGIT}+            { yylval = number(yytext); return TKN_NUMBER; }
+{DIGIT}+"."{DIGIT}* { yylval = number_real(yytext); return TKN_NUMBER_REAL; }
+"."{DIGIT}+         { yylval = number_real(yytext); return TKN_NUMBER_REAL; }
 
 "\""      { string_buf_ptr = string_buf; BEGIN(strng); }
 
@@ -167,6 +169,7 @@ load_ext_addr    { yylval=new_token(K_LOAD_EXT_ADDR); return K_LOAD_EXT_ADDR; }
 loadpage_hi      { yylval=new_token(K_LOADPAGE_HI); return K_LOADPAGE_HI; }
 loadpage_lo      { yylval=new_token(K_LOADPAGE_LO); return K_LOADPAGE_LO; }
 max_write_delay  { yylval=NULL; return K_MAX_WRITE_DELAY; }
+mcu_base         { yylval=NULL; return K_MCU_BASE; }
 memory           { yylval=NULL; return K_MEMORY; }
 min_write_delay  { yylval=NULL; return K_MIN_WRITE_DELAY; }
 miso             { yylval=NULL; return K_MISO; }
@@ -176,6 +179,7 @@ no               { yylval=new_token(K_NO); return K_NO; }
 num_banks        { yylval=NULL; return K_NUM_PAGES; }
 num_pages        { yylval=NULL; return K_NUM_PAGES; }
 nvm_base         { yylval=NULL; return K_NVM_BASE; }
+ocdrev           { yylval=NULL; return K_OCDREV; }
 offset           { yylval=NULL; return K_OFFSET; }
 page_size        { yylval=NULL; return K_PAGE_SIZE; }
 paged            { yylval=NULL; return K_PAGED; }
@@ -244,6 +248,8 @@ yes              { yylval=new_token(K_YES); return K_YES; }
 "="       { yylval = NULL; pyytext(); return TKN_EQUAL; }
 ";"       { yylval = NULL; pyytext(); return TKN_SEMI; }
 "~"       { yylval = NULL; pyytext(); return TKN_TILDE; }
+"("       { yylval = NULL; pyytext(); return TKN_LEFT_PAREN; }
+")"       { yylval = NULL; pyytext(); return TKN_RIGHT_PAREN; }
 
 "\n"      { lineno++; }
 [ \r\t]+  { /* ignore whitespace */ }

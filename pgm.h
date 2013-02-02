@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -109,6 +108,8 @@ typedef struct programmer_t {
   int  (*paged_load)     (struct programmer_t * pgm, AVRPART * p, AVRMEM * m,
                           unsigned int page_size, unsigned int baseaddr,
                           unsigned int n_bytes);
+  int  (*page_erase)     (struct programmer_t * pgm, AVRPART * p, AVRMEM * m,
+                          unsigned int baseaddr);
   void (*write_setup)    (struct programmer_t * pgm, AVRPART * p, AVRMEM * m);
   int  (*write_byte)     (struct programmer_t * pgm, AVRPART * p, AVRMEM * m,
                           unsigned long addr, unsigned char value);

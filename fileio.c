@@ -13,8 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -30,7 +29,11 @@
 #include <stdint.h>
 
 #ifdef HAVE_LIBELF
+#ifdef HAVE_LIBELF_H
 #include <libelf.h>
+#elif defined(HAVE_LIBELF_LIBELF_H)
+#include <libelf/libelf.h>
+#endif
 #define EM_AVR32 0x18ad         /* inofficial */
 #endif
 
@@ -688,6 +691,28 @@ static int srec2b(char * infile, FILE * inf,
 
 #ifdef HAVE_LIBELF
 /*
+ * Determine whether the ELF file section pointed to by `sh' fits
+ * completely into the program header segment pointed to by `ph'.
+ *
+ * Assumes the section has been checked already before to actually
+ * contain data (SHF_ALLOC, SHT_PROGBITS, sh_size > 0).
+ *
+ * Sometimes, program header segments might be larger than the actual
+ * file sections.  On VM architectures, this is used to allow mmapping
+ * the entire ELF file "as is" (including things like the program
+ * header table itself).
+ */
+static inline
+int is_section_in_segment(Elf32_Shdr *sh, Elf32_Phdr *ph)
+{
+    if (sh->sh_offset < ph->p_offset)
+        return 0;
+    if (sh->sh_offset + sh->sh_size > ph->p_offset + ph->p_filesz)
+        return 0;
+    return 1;
+}
+
+/*
  * Return the ELF section descriptor that corresponds to program
  * header `ph'.  The program header is expected to be of p_type
  * PT_LOAD, and to have a nonzero p_filesz.  (PT_LOAD sections with a
@@ -711,8 +736,10 @@ static Elf_Scn *elf_get_scn(Elf *e, Elf32_Phdr *ph, Elf32_Shdr **shptr)
         sh->sh_type != SHT_PROGBITS)
       /* we are only interested in PROGBITS, ALLOC sections */
       continue;
-    if (ph->p_vaddr == sh->sh_addr &&
-        ph->p_offset == sh->sh_offset) {
+    if (sh->sh_size == 0)
+      /* we are not interested in empty sections */
+      continue;
+    if (is_section_in_segment(sh, ph)) {
       /* yeah, we found it */
       *shptr = sh;
       return s;
@@ -742,7 +769,10 @@ static int elf_mem_limits(AVRMEM *mem, struct avrpart * p,
       rv = -1;
     }
   } else {
-    if (strcmp(mem->desc, "flash") == 0) {
+    if (strcmp(mem->desc, "flash") == 0 ||
+        strcmp(mem->desc, "boot") == 0 ||
+        strcmp(mem->desc, "application") == 0 ||
+        strcmp(mem->desc, "apptable") == 0) {
       *lowbound = 0;
       *highbound = 0x7ffff;       /* max 8 MiB */
       *fileoff = 0;
@@ -794,6 +824,30 @@ static int elf2b(char * infile, FILE * inf,
             "%s: ERROR: Cannot handle \"%s\" memory region from ELF file\n",
             progname, mem->desc);
     return -1;
+  }
+
+  /*
+   * The Xmega memory regions for "boot", "application", and
+   * "apptable" are actually sub-regions of "flash".  Refine the
+   * applicable limits.  This allows to select only the appropriate
+   * sections out of an ELF file that contains section data for more
+   * than one sub-segment.
+   */
+  if ((p->flags & AVRPART_HAS_PDI) != 0 &&
+      (strcmp(mem->desc, "boot") == 0 ||
+       strcmp(mem->desc, "application") == 0 ||
+       strcmp(mem->desc, "apptable") == 0)) {
+    AVRMEM *flashmem = avr_locate_mem(p, "flash");
+    if (flashmem == NULL) {
+      fprintf(stderr,
+              "%s: ERROR: No \"flash\" memory region found, "
+              "cannot compute bounds of \"%s\" sub-region.\n",
+              progname, mem->desc);
+      return -1;
+    }
+    /* The config file offsets are PDI offsets, rebase to 0. */
+    low = mem->offset - flashmem->offset;
+    high = low + mem->size - 1;
   }
 
   if (elf_version(EV_CURRENT) == EV_NONE) {
@@ -889,6 +943,14 @@ static int elf2b(char * infile, FILE * inf,
     goto done;
   }
 
+  size_t sndx;
+  if (elf_getshstrndx(e, &sndx) != 0) {
+    fprintf(stderr,
+            "%s: ERROR: Error obtaining section name string table: %s\n",
+            progname, elf_errmsg(-1));
+    sndx = 0;
+  }
+
   /*
    * Walk the program header table, pick up entries that are of type
    * PT_LOAD, and have a non-zero p_filesz.
@@ -904,33 +966,6 @@ static int elf2b(char * infile, FILE * inf,
               "    p_vaddr 0x%x, p_paddr 0x%x, p_filesz %d\n",
               progname, i, ph[i].p_vaddr, ph[i].p_paddr, ph[i].p_filesz);
     }
-    if (ph[i].p_paddr >= low &&
-        ph[i].p_paddr < high) {
-      /* OK */
-    } else {
-      if (verbose >= 2) {
-        fprintf(stderr,
-                "    => skipping, inappropriate for \"%s\" memory region\n",
-                mem->desc);
-      }
-      continue;
-    }
-    /*
-     * 1-byte sized memory regions are special: they are used for fuse
-     * bits, where multiple regions (in the config file) map to a
-     * single, larger region in the ELF file (e.g. "lfuse", "hfuse",
-     * and "efuse" all map to ".fuse").  We silently accept a larger
-     * ELF file region for these, and extract the actual byte to write
-     * from it, using the "foff" offset obtained above.
-     */
-    if (mem->size != 1 &&
-        ph[i].p_paddr + ph[i].p_filesz > mem->size) {
-      fprintf(stderr,
-              "%s: ERROR: program header entry #%d does not fit into \"%s\" memory:\n"
-              "    0x%x + %u > %u\n",
-              progname, i, mem->desc, ph[i].p_paddr, ph[i].p_filesz, mem->size);
-      continue;
-    }
 
     Elf32_Shdr *sh;
     Elf_Scn *s = elf_get_scn(e, ph + i, &sh);
@@ -938,6 +973,52 @@ static int elf2b(char * infile, FILE * inf,
       continue;
 
     if ((sh->sh_flags & SHF_ALLOC) && sh->sh_size) {
+      const char *sname;
+
+      if (sndx != 0) {
+        sname = elf_strptr(e, sndx, sh->sh_name);
+      } else {
+        sname = "*unknown*";
+      }
+
+      unsigned int lma;
+      lma = ph[i].p_paddr + sh->sh_offset - ph[i].p_offset;
+
+      if (verbose >= 2) {
+        fprintf(stderr,
+                "%s: Found section \"%s\", LMA 0x%x, sh_size %u\n",
+                progname, sname, lma, sh->sh_size);
+      }
+
+      if (lma >= low &&
+          lma + sh->sh_size < high) {
+        /* OK */
+      } else {
+        if (verbose >= 2) {
+          fprintf(stderr,
+                  "    => skipping, inappropriate for \"%s\" memory region\n",
+                  mem->desc);
+        }
+        continue;
+      }
+      /*
+       * 1-byte sized memory regions are special: they are used for fuse
+       * bits, where multiple regions (in the config file) map to a
+       * single, larger region in the ELF file (e.g. "lfuse", "hfuse",
+       * and "efuse" all map to ".fuse").  We silently accept a larger
+       * ELF file region for these, and extract the actual byte to write
+       * from it, using the "foff" offset obtained above.
+       */
+      if (mem->size != 1 &&
+          sh->sh_size > mem->size) {
+        fprintf(stderr,
+                "%s: ERROR: section \"%s\" does not fit into \"%s\" memory:\n"
+                "    0x%x + %u > %u\n",
+                progname, sname, mem->desc,
+                lma, sh->sh_size, mem->size);
+        continue;
+      }
+
       Elf_Data *d = NULL;
       while ((d = elf_getdata(s, d)) != NULL) {
         if (verbose >= 2) {
@@ -967,7 +1048,7 @@ static int elf2b(char * infile, FILE * inf,
         } else {
           unsigned int idx;
 
-          idx = ph[i].p_paddr - low + d->d_off;
+          idx = lma - low + d->d_off;
           if ((int)(idx + d->d_size) > rv)
             rv = idx + d->d_size;
           if (verbose >= 3) {
@@ -1539,7 +1620,10 @@ int fileio(int op, char * filename, FILEFMT format,
   }
 
   if (rc > 0) {
-    if ((op == FIO_READ) && (strcasecmp(mem->desc, "flash") == 0)) {
+    if ((op == FIO_READ) && (strcasecmp(mem->desc, "flash") == 0 ||
+                             strcasecmp(mem->desc, "application") == 0 ||
+                             strcasecmp(mem->desc, "apptable") == 0 ||
+                             strcasecmp(mem->desc, "boot") == 0)) {
       /*
        * if we are reading flash, just mark the size as being the
        * highest non-0xff byte

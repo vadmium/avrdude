@@ -168,6 +168,18 @@ attached to a physical serial port.  Connecting to a serial port
 emulated on top of USB is likely to not work at all, or to work
 abysmally slow.
 
+If you happen to have a Linux system with at least 4 hardware GPIOs 
+available (like almost all embedded Linux boards) you can do without 
+any additional hardware - just connect them to the MOSI, MISO, RESET 
+and SCK pins on the AVR and use the linuxgpio programmer type. It bitbangs
+the lines using the Linux sysfs GPIO interface. Of course, care should
+be taken about voltage level compatibility. Also, although not strictrly 
+required, it is strongly advisable to protect the GPIO pins from 
+overcurrent situations in some way. The simplest would be to just put
+some resistors in series or better yet use a 3-state buffer driver like
+the 74HC244. Have a look at http://kolev.info/avrdude-linuxgpio for a more
+detailed tutorial about using this programmer type.
+
 The STK500, JTAG ICE, avr910, and avr109/butterfly use the serial port to communicate with the PC.
 The STK600, JTAG ICE mkII, AVRISP mkII, USBasp, avrftdi (and derivitives), and USBtinyISP
 programmers communicate through the USB, using @code{libusb} as a
@@ -793,14 +805,29 @@ with programming the AVR in the other design.
 @item @code{7} @tab   8 MHz
 @end multitable
 
+@item @samp{rawfreq=0..3}
+Sets the SPI speed and uses the Bus Pirate's binary ``raw-wire'' mode instead
+of the default binary SPI mode:
+
+@multitable @columnfractions .05 .3
+@item @code{0} @tab 5 kHz
+@item @code{1} @tab 50 kHz
+@item @code{2} @tab 100 kHz (Firmware v4.2+ only)
+@item @code{3} @tab 400 kHz (v4.2+)
+@end multitable
+
+The only advantage of the ``raw-wire'' mode is that different SPI frequencies
+are available. Paged writing is not implemented in this mode.
+
 @item @samp{ascii}
-Attempt to ASCII mode even when the firmware supports BinMode (binary mode).
+Attempt to use ASCII mode even when the firmware supports BinMode (binary
+mode).
 BinMode is supported in firmware 2.7 and newer, older FW's either don't
 have BinMode or their BinMode is buggy. ASCII mode is slower and makes
 the above
-@samp{reset=}
+@samp{reset=}, @samp{spifreq=}
 and
-@samp{spifreq=}
+@samp{rawfreq=}
 parameters unavailable. Be aware that ASCII mode is not guaranteed to work
 with newer firmware versions, and is retained only to maintain compatability
 with older firmware versions.
@@ -809,6 +836,12 @@ with older firmware versions.
 Firmware versions 5.10 and newer support a binary mode SPI command that enables
 whole pages to be written to AVR flash memory at once, resulting in a
 significant write speed increase. If use of this mode is not desirable for some
+reason, this option disables it.
+
+@item @samp{nopagedread}
+Newer firmware versions support in binary mode SPI command some AVR Extended 
+Commands. Using the ``Bulk Memory Read from Flash'' results in a
+significant read speed increase. If use of this mode is not desirable for some
 reason, this option disables it.
 
 @item @samp{cpufreq=@var{125..4000}}
@@ -837,6 +870,26 @@ following optional extended parameter is accepted:
 After performing the port open phase, AVRDUDE will wait/snooze for
 @var{snooze} milliseconds before continuing to the protocol sync phase.
 No toggling of DTR/RTS is performed if @var{snooze} > 0.
+@end table
+
+@item PICkit2
+Connection to the PICkit2 programmer:
+@multitable @columnfractions .05 .3
+@item @code{(AVR)} @tab      @code{(PICkit2)}
+@item @code{RST} @tab      @code{VPP/MCLR (1) }
+@item @code{VDD} @tab      @code{VDD Target (2) -- possibly optional if AVR self powered }
+@item @code{GND} @tab      @code{GND (3) }
+@item @code{MISO} @tab      @code{PGD (4) }
+@item @code{SCLK} @tab      @code{PDC (5) }
+@item @code{OSI} @tab      @code{AUX (6) }
+@end multitable
+
+Extended commandline parameters:
+@table @code
+@item @samp{clockrate=@var{rate}}
+Sets the SPI clocking rate in Hz (default is 100kHz). Alternately the -B or -i options can be used to set the period.
+@item @samp{timeout=@var{usb-transaction-timeout}}
+Sets the timeout for USB reads and writes in milliseconds (default is 1500 ms).
 @end table
 
 @end table

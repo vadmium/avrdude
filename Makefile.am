@@ -13,8 +13,7 @@
 # GNU General Public License for more details.
 #
 # You should have received a copy of the GNU General Public License
-# along with this program; if not, write to the Free Software
-# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
 #
 
 #
@@ -30,6 +29,9 @@ EXTRA_DIST   = \
 	ChangeLog-2007 \
 	ChangeLog-2008 \
 	ChangeLog-2009 \
+	ChangeLog-2010 \
+	ChangeLog-2011 \
+	ChangeLog-2012 \
 	avrdude.1 \
 	avrdude.spec \
 	bootstrap
@@ -61,7 +63,7 @@ avrdude_CFLAGS   = @ENABLE_WARNINGS@
 
 libavrdude_a_CFLAGS   = @ENABLE_WARNINGS@
 
-avrdude_LDADD  = $(top_builddir)/$(noinst_LIBRARIES) @LIBUSB@ @LIBUSB_1_0@ @LIBFTDI@ @LIBHID@ @LIBELF@ -lm
+avrdude_LDADD  = $(top_builddir)/$(noinst_LIBRARIES) @LIBUSB@ @LIBUSB_1_0@ @LIBFTDI@ @LIBHID@ @LIBELF@ @LIBPTHREAD@ -lm
 
 bin_PROGRAMS = avrdude
 
@@ -119,6 +121,11 @@ libavrdude_a_SOURCES = \
 	jtagmkII.c \
 	jtagmkII.h \
 	jtagmkII_private.h \
+	jtag3.c \
+	jtag3.h \
+	jtag3_private.h \
+	linuxgpio.c \
+	linuxgpio.h \
 	linux_ppdev.h \
 	lists.c \
 	lists.h \
@@ -129,6 +136,8 @@ libavrdude_a_SOURCES = \
 	pgm.h \
 	pgm_type.c \
 	pgm_type.h \
+	pickit2.c \
+	pickit2.h \
 	pindefs.h \
 	ppi.c \
 	ppi.h \

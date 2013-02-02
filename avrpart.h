@@ -14,8 +14,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -156,7 +155,9 @@ typedef struct avrpart {
   unsigned char rampz;              /* JTAG ICE mkII XML file parameter */
   unsigned char spmcr;              /* JTAG ICE mkII XML file parameter */
   unsigned short eecr;              /* JTAC ICE mkII XML file parameter */
+  unsigned int mcu_base;            /* Base address of MCU control block in ATxmega devices */
   unsigned int nvm_base;            /* Base address of NVM controller in ATxmega devices */
+  int           ocdrev;             /* OCD revision (JTAGICE3 parameter, from AS6 XML files) */
 
   OPCODE      * op[AVR_OP_MAX];     /* opcodes */
 
@@ -203,6 +204,7 @@ int avr_set_bits(OPCODE * op, unsigned char * cmd);
 int avr_set_addr(OPCODE * op, unsigned char * cmd, unsigned long addr);
 int avr_set_input(OPCODE * op, unsigned char * cmd, unsigned char data);
 int avr_get_output(OPCODE * op, unsigned char * res, unsigned char * data);
+int avr_get_output_index(OPCODE * op);
 
 /* Functions for AVRMEM structures */
 AVRMEM * avr_new_memtype(void);
@@ -220,6 +222,7 @@ void      avr_free_part(AVRPART * d);
 AVRPART * locate_part(LISTID parts, char * partdesc);
 AVRPART * locate_part_by_avr910_devcode(LISTID parts, int devcode);
 void avr_display(FILE * f, AVRPART * p, const char * prefix, int verbose);
+const char * avr_pin_name(int);
 
 typedef void (*walk_avrparts_cb)(const char *name, const char *desc,
                                  const char *cfgname, int cfglineno,

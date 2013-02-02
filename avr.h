@@ -13,8 +13,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 /* $Id$ */
@@ -41,8 +40,7 @@ int avr_tpi_poll_nvmbsy(PROGRAMMER *pgm);
 int avr_read_byte_default(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
 			  unsigned long addr, unsigned char * value);
 
-int avr_read(PROGRAMMER * pgm, AVRPART * p, char * memtype, AVRPART * v,
-             int verbose);
+int avr_read(PROGRAMMER * pgm, AVRPART * p, char * memtype, AVRPART * v);
 
 int avr_write_page(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
                    unsigned long addr);
@@ -54,7 +52,7 @@ int avr_write_byte_default(PROGRAMMER * pgm, AVRPART * p, AVRMEM * mem,
 			   unsigned long addr, unsigned char data);
 
 int avr_write(PROGRAMMER * pgm, AVRPART * p, char * memtype, int size,
-              int verbose);
+              int auto_erase);
 
 int avr_signature(PROGRAMMER * pgm, AVRPART * p);
 
